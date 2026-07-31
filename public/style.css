@@ -85,8 +85,32 @@ html, body {
 }
 .nickname-section input:focus,
 .lobby-section input:focus { border-color: var(--accent); }
+.nickname-section input + label { margin-top: 0.8rem; }
+.auth-buttons { display: flex; gap: 0.6rem; margin-top: 1rem; }
+.btn-auth { flex: 1; }
+.nickname-msg { font-size: 0.82rem; margin-top: 0.6rem; min-height: 1.1rem; text-align: center; }
+.nickname-msg.error { color: var(--danger); }
+.welcome-msg { text-align: center; font-size: 1rem; font-weight: 700; color: var(--accent); margin-bottom: 0.3rem; }
 
 .menu-buttons { display: flex; flex-direction: column; gap: 0.7rem; }
+
+/* ===== LEADERBOARD ===== */
+.leaderboard { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.5rem; }
+.lb-row {
+  display: grid;
+  grid-template-columns: 2rem 1fr 2.5rem 2.5rem;
+  align-items: center;
+  padding: 0.55rem 0.6rem;
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+.lb-row.lb-head { background: transparent; color: var(--text-dim); font-size: 0.78rem; padding: 0.2rem 0.6rem; }
+.lb-row.me { background: var(--mine-glow); font-weight: 700; }
+.lb-rank { color: var(--text-dim); font-weight: 700; }
+.lb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-w { text-align: center; color: var(--success); font-weight: 700; }
+.lb-l { text-align: center; color: var(--text-dim); }
 .btn-icon { margin-right: 0.3rem; }
 
 /* ===== BUTTONS ===== */

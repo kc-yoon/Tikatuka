@@ -23,11 +23,19 @@
         <h1>티카투카</h1>
         <p class="subtitle">Knucklebones</p>
       </div>
-      <div class="nickname-section">
+      <div class="nickname-section" id="auth-section">
         <label for="nickname-input">닉네임</label>
-        <input type="text" id="nickname-input" maxlength="12" placeholder="닉네임 입력" autocomplete="off">
+        <input type="text" id="nickname-input" maxlength="12" placeholder="닉네임 입력 (2~12자)" autocomplete="off">
+        <label for="password-input">비밀번호</label>
+        <input type="password" id="password-input" maxlength="20" placeholder="비밀번호 입력 (4~20자)" autocomplete="off">
+        <div class="auth-buttons">
+          <button class="btn btn-primary btn-auth" onclick="app.login()">로그인</button>
+          <button class="btn btn-secondary btn-auth" onclick="app.register()">회원가입</button>
+        </div>
+        <p class="nickname-msg" id="auth-msg"></p>
       </div>
-      <div class="menu-buttons">
+      <div class="menu-buttons" id="menu-buttons" style="display:none">
+        <div class="welcome-msg" id="welcome-msg"></div>
         <button class="btn btn-primary" onclick="app.showOnlineLobby()">
           <span class="btn-icon">&#9860;</span> 온라인 대전
         </button>
@@ -37,7 +45,11 @@
         <button class="btn btn-secondary" onclick="app.startLocal()">
           <span class="btn-icon">&#128101;</span> 로컬 2인
         </button>
+        <button class="btn btn-secondary" onclick="app.showLeaderboard()">
+          <span class="btn-icon">&#127942;</span> 랭킹
+        </button>
         <button class="btn btn-ghost" onclick="app.showRules()">규칙 보기</button>
+        <button class="btn btn-ghost" onclick="app.logout()">로그아웃</button>
       </div>
     </div>
   </div>
@@ -58,6 +70,15 @@
         <button class="btn btn-secondary" onclick="app.joinRoom()">참가하기</button>
       </div>
       <p id="lobby-message" class="lobby-msg"></p>
+    </div>
+  </div>
+
+  <!-- ===== LEADERBOARD ===== -->
+  <div id="screen-leaderboard" class="screen">
+    <div class="panel-container">
+      <button class="btn-back" onclick="app.showMenu()">&larr; 뒤로</button>
+      <h2>🏆 랭킹</h2>
+      <div class="leaderboard" id="leaderboard-list"></div>
     </div>
   </div>
 

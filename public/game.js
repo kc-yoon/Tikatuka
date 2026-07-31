@@ -190,12 +190,6 @@ class App {
 
   // ---------- init ----------
   initUI() {
-    const nk = document.getElementById('nickname-input');
-    if (this.nickname) nk.value = this.nickname;
-    nk.addEventListener('input', () => {
-      this.nickname = nk.value.trim();
-      localStorage.setItem('tikatuka_nickname', this.nickname);
-    });
     // fill logo dice
     document.querySelectorAll('.logo-dice .die-face').forEach((el, i) => {
       setDie(el, i === 0 ? 5 : 3, i === 1);
@@ -204,6 +198,92 @@ class App {
     document.getElementById('room-code-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.joinRoom();
     });
+    document.getElementById('password-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.login();
+    });
+    if (this.nickname) this.showMenuButtons();
+  }
+
+  // ---------- auth ----------
+  async login() {
+    const name = document.getElementById('nickname-input').value.trim();
+    const pw = document.getElementById('password-input').value.trim();
+    const msg = document.getElementById('auth-msg');
+    if (!name || !pw) { msg.textContent = '닉네임과 비밀번호를 입력해주세요.'; msg.className = 'nickname-msg error'; return; }
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname: name, password: pw })
+      });
+      const data = await res.json();
+      if (!data.ok) { msg.textContent = data.reason || '로그인 실패'; msg.className = 'nickname-msg error'; return; }
+      this.nickname = data.nickname;
+      localStorage.setItem('tikatuka_nickname', data.nickname);
+      msg.textContent = '';
+      this.showMenuButtons();
+    } catch {
+      msg.textContent = '서버 연결 실패. 다시 시도해주세요.'; msg.className = 'nickname-msg error';
+    }
+  }
+
+  async register() {
+    const name = document.getElementById('nickname-input').value.trim();
+    const pw = document.getElementById('password-input').value.trim();
+    const msg = document.getElementById('auth-msg');
+    if (!name || name.length < 2 || name.length > 12) { msg.textContent = '닉네임은 2~12자로 입력해주세요.'; msg.className = 'nickname-msg error'; return; }
+    if (!pw || pw.length < 4 || pw.length > 20) { msg.textContent = '비밀번호는 4~20자로 입력해주세요.'; msg.className = 'nickname-msg error'; return; }
+    try {
+      const res = await fetch('/api/register', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname: name, password: pw })
+      });
+      const data = await res.json();
+      if (!data.ok) { msg.textContent = data.reason || '회원가입 실패'; msg.className = 'nickname-msg error'; return; }
+      this.nickname = data.nickname;
+      localStorage.setItem('tikatuka_nickname', data.nickname);
+      msg.textContent = '';
+      this.showMenuButtons();
+    } catch {
+      msg.textContent = '서버 연결 실패. 다시 시도해주세요.'; msg.className = 'nickname-msg error';
+    }
+  }
+
+  showMenuButtons() {
+    document.getElementById('auth-section').style.display = 'none';
+    document.getElementById('menu-buttons').style.display = '';
+    document.getElementById('welcome-msg').textContent = this.nickname + '님 환영합니다!';
+  }
+
+  logout() {
+    this.nickname = '';
+    localStorage.removeItem('tikatuka_nickname');
+    document.getElementById('password-input').value = '';
+    document.getElementById('auth-section').style.display = '';
+    document.getElementById('menu-buttons').style.display = 'none';
+  }
+
+  async showLeaderboard() {
+    const list = document.getElementById('leaderboard-list');
+    list.innerHTML = '<p class="dim">불러오는 중...</p>';
+    this.showScreen('screen-leaderboard');
+    try {
+      const res = await fetch('/api/leaderboard');
+      const rows = await res.json();
+      if (!rows.length) { list.innerHTML = '<p class="dim">아직 기록이 없습니다.</p>'; return; }
+      let html = '<div class="lb-row lb-head"><span class="lb-rank">#</span><span class="lb-name">닉네임</span><span class="lb-w">승</span><span class="lb-l">패</span></div>';
+      rows.forEach((r, i) => {
+        const me = r.nickname === this.nickname ? ' me' : '';
+        html += '<div class="lb-row' + me + '"><span class="lb-rank">' + (i + 1) + '</span>' +
+                '<span class="lb-name"></span><span class="lb-w">' + r.wins + '</span>' +
+                '<span class="lb-l">' + r.losses + '</span></div>';
+        // set name via textContent to avoid injection
+      });
+      list.innerHTML = html;
+      const nameCells = list.querySelectorAll('.lb-row:not(.lb-head) .lb-name');
+      rows.forEach((r, i) => { if (nameCells[i]) nameCells[i].textContent = r.nickname; });
+    } catch {
+      list.innerHTML = '<p class="dim">불러오기 실패</p>';
+    }
   }
 
   bindNet() {
@@ -574,8 +654,18 @@ class App {
       if (sMine === sOther) { icon = '🤝'; title = '무승부'; msg = '나 ' + sMine + ' : ' + sOther + ' 상대'; }
       else if (sMine > sOther) { icon = '🏆'; title = '승리!'; msg = '나 ' + sMine + ' : ' + sOther + ' 상대'; }
       else { icon = '😢'; title = '패배'; msg = '나 ' + sMine + ' : ' + sOther + ' 상대'; }
+      // record win/loss (AI & online only, skip draws)
+      if (sMine !== sOther) this.reportResult(sMine > sOther);
     }
     this.showGameOverBox(icon, title, msg, this.mode !== 'online' || true);
+  }
+
+  reportResult(won) {
+    if (!this.nickname) return;
+    fetch('/api/result', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nickname: this.nickname, won })
+    }).catch(() => {});
   }
 
   showGameOverBox(icon, title, msg, allowRematch) {

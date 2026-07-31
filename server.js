@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const { Pool } = require('pg');
 
 const app = express();
 const server = http.createServer(app);
@@ -9,7 +10,137 @@ const io = new Server(server, {
   cors: { origin: '*' }
 });
 
+app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ==================== STORAGE ====================
+// Uses PostgreSQL when DATABASE_URL is set (production), otherwise an
+// in-memory store so local development works without a database.
+
+const useDB = !!process.env.DATABASE_URL;
+let pool = null;
+const memUsers = new Map(); // nicknameLower -> { nickname, password, wins, losses }
+
+if (useDB) {
+  pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
+  pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      nickname VARCHAR(12) NOT NULL,
+      nickname_lower VARCHAR(12) UNIQUE NOT NULL,
+      password VARCHAR(20) NOT NULL,
+      wins INTEGER NOT NULL DEFAULT 0,
+      losses INTEGER NOT NULL DEFAULT 0
+    )
+  `).then(() => console.log('DB 테이블 준비 완료'))
+    .catch(err => console.error('DB 초기화 실패:', err));
+} else {
+  console.log('DATABASE_URL 없음 → 인메모리 저장소 사용 (로컬 개발용)');
+}
+
+const store = {
+  async getUser(nameLower) {
+    if (useDB) {
+      const r = await pool.query(
+        'SELECT nickname, password, wins, losses FROM users WHERE nickname_lower = $1',
+        [nameLower]
+      );
+      return r.rows[0] || null;
+    }
+    return memUsers.get(nameLower) || null;
+  },
+  async createUser(nickname, nameLower, password) {
+    if (useDB) {
+      await pool.query(
+        'INSERT INTO users (nickname, nickname_lower, password) VALUES ($1, $2, $3)',
+        [nickname, nameLower, password]
+      );
+    } else {
+      memUsers.set(nameLower, { nickname, password, wins: 0, losses: 0 });
+    }
+  },
+  async addResult(nameLower, won) {
+    if (useDB) {
+      const col = won ? 'wins' : 'losses';
+      await pool.query(`UPDATE users SET ${col} = ${col} + 1 WHERE nickname_lower = $1`, [nameLower]);
+    } else {
+      const u = memUsers.get(nameLower);
+      if (u) { if (won) u.wins++; else u.losses++; }
+    }
+  },
+  async leaderboard() {
+    if (useDB) {
+      const r = await pool.query(
+        'SELECT nickname, wins, losses FROM users ORDER BY wins DESC, losses ASC LIMIT 20'
+      );
+      return r.rows;
+    }
+    return [...memUsers.values()]
+      .map(u => ({ nickname: u.nickname, wins: u.wins, losses: u.losses }))
+      .sort((a, b) => b.wins - a.wins || a.losses - b.losses)
+      .slice(0, 20);
+  }
+};
+
+// ==================== AUTH API ====================
+
+app.post('/api/register', async (req, res) => {
+  const name = (req.body.nickname || '').trim();
+  const pw = (req.body.password || '').trim();
+  if (!name || name.length < 2 || name.length > 12) {
+    return res.json({ ok: false, reason: '닉네임은 2~12자로 입력해주세요.' });
+  }
+  if (!pw || pw.length < 4 || pw.length > 20) {
+    return res.json({ ok: false, reason: '비밀번호는 4~20자로 입력해주세요.' });
+  }
+  try {
+    const existing = await store.getUser(name.toLowerCase());
+    if (existing) return res.json({ ok: false, reason: '이미 사용 중인 닉네임입니다.' });
+    await store.createUser(name, name.toLowerCase(), pw);
+    res.json({ ok: true, nickname: name });
+  } catch (err) {
+    res.json({ ok: false, reason: '서버 오류가 발생했습니다.' });
+  }
+});
+
+app.post('/api/login', async (req, res) => {
+  const name = (req.body.nickname || '').trim();
+  const pw = (req.body.password || '').trim();
+  if (!name || !pw) return res.json({ ok: false, reason: '닉네임과 비밀번호를 입력해주세요.' });
+  try {
+    const user = await store.getUser(name.toLowerCase());
+    if (!user) return res.json({ ok: false, reason: '존재하지 않는 닉네임입니다.' });
+    if (user.password !== pw) return res.json({ ok: false, reason: '비밀번호가 틀렸습니다.' });
+    res.json({ ok: true, nickname: user.nickname });
+  } catch (err) {
+    res.json({ ok: false, reason: '서버 오류가 발생했습니다.' });
+  }
+});
+
+app.post('/api/result', async (req, res) => {
+  const name = (req.body.nickname || '').trim();
+  const won = !!req.body.won;
+  if (!name) return res.json({ ok: false });
+  try {
+    await store.addResult(name.toLowerCase(), won);
+    res.json({ ok: true });
+  } catch (err) {
+    res.json({ ok: false });
+  }
+});
+
+app.get('/api/leaderboard', async (req, res) => {
+  try {
+    res.json(await store.leaderboard());
+  } catch (err) {
+    res.json([]);
+  }
+});
+
+// ==================== ROOMS (socket.io) ====================
 
 const rooms = new Map();
 
@@ -29,10 +160,7 @@ io.on('connection', (socket) => {
   socket.on('createRoom', (data) => {
     const code = generateCode();
     const nickname = (data && data.nickname) || 'Player 1';
-    rooms.set(code, {
-      players: [socket.id],
-      nicknames: { 1: nickname }
-    });
+    rooms.set(code, { players: [socket.id], nicknames: { 1: nickname } });
     socket.join(code);
     socket.roomCode = code;
     socket.playerNumber = 1;
@@ -59,7 +187,6 @@ io.on('connection', (socket) => {
     console.log(`[방 참가] ${code} by ${nickname}`);
   });
 
-  // 상대에게 수(주사위 값 + 놓은 열)를 그대로 전달
   socket.on('gameAction', (data) => {
     if (!socket.roomCode) return;
     socket.to(socket.roomCode).emit('gameAction', data);
