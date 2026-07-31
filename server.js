@@ -27,7 +27,7 @@ if (useDB) {
     ssl: { rejectUnauthorized: false }
   });
   pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE IF NOT EXISTS tikatuka_users (
       id SERIAL PRIMARY KEY,
       nickname VARCHAR(12) NOT NULL,
       nickname_lower VARCHAR(12) UNIQUE NOT NULL,
@@ -45,7 +45,7 @@ const store = {
   async getUser(nameLower) {
     if (useDB) {
       const r = await pool.query(
-        'SELECT nickname, password, wins, losses FROM users WHERE nickname_lower = $1',
+        'SELECT nickname, password, wins, losses FROM tikatuka_users WHERE nickname_lower = $1',
         [nameLower]
       );
       return r.rows[0] || null;
@@ -55,7 +55,7 @@ const store = {
   async createUser(nickname, nameLower, password) {
     if (useDB) {
       await pool.query(
-        'INSERT INTO users (nickname, nickname_lower, password) VALUES ($1, $2, $3)',
+        'INSERT INTO tikatuka_users (nickname, nickname_lower, password) VALUES ($1, $2, $3)',
         [nickname, nameLower, password]
       );
     } else {
@@ -65,7 +65,7 @@ const store = {
   async addResult(nameLower, won) {
     if (useDB) {
       const col = won ? 'wins' : 'losses';
-      await pool.query(`UPDATE users SET ${col} = ${col} + 1 WHERE nickname_lower = $1`, [nameLower]);
+      await pool.query(`UPDATE tikatuka_users SET ${col} = ${col} + 1 WHERE nickname_lower = $1`, [nameLower]);
     } else {
       const u = memUsers.get(nameLower);
       if (u) { if (won) u.wins++; else u.losses++; }
@@ -74,7 +74,7 @@ const store = {
   async leaderboard() {
     if (useDB) {
       const r = await pool.query(
-        'SELECT nickname, wins, losses FROM users ORDER BY wins DESC, losses ASC LIMIT 20'
+        'SELECT nickname, wins, losses FROM tikatuka_users ORDER BY wins DESC, losses ASC LIMIT 20'
       );
       return r.rows;
     }
