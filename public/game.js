@@ -412,9 +412,29 @@ class App {
     this.closeOverlay();
     this.setupBoardLabels();
     this.renderBoards();
+    const h2h = document.getElementById('h2h-record');
+    h2h.style.display = 'none';
+    h2h.textContent = '';
     this.showScreen('screen-game');
     this.sizeBoards();
+    if (this.mode === 'online') this.loadH2H();
     this.startTurn();
+  }
+
+  // fetch and show head-to-head record vs the current online opponent
+  async loadH2H() {
+    const opponent = this.names[1 - this.myPlayer];
+    const me = this.nickname;
+    if (!opponent || !me) return;
+    try {
+      const res = await fetch('/api/h2h?player=' + encodeURIComponent(me) +
+                              '&opponent=' + encodeURIComponent(opponent));
+      const d = await res.json();
+      const el = document.getElementById('h2h-record');
+      el.textContent = '상대전적 ' + d.wins + '승 ' + d.losses + '패';
+      el.style.display = '';
+      this.sizeBoards();
+    } catch {}
   }
 
   // ---------- perspective ----------
@@ -701,17 +721,18 @@ class App {
       if (sMine === sOther) { icon = '🤝'; title = '무승부'; msg = '나 ' + sMine + ' : ' + sOther + ' 상대'; }
       else if (sMine > sOther) { icon = '🏆'; title = '승리!'; msg = '나 ' + sMine + ' : ' + sOther + ' 상대'; }
       else { icon = '😢'; title = '패배'; msg = '나 ' + sMine + ' : ' + sOther + ' 상대'; }
-      // record win/loss (AI & online only, skip draws)
-      if (sMine !== sOther) this.reportResult(sMine > sOther);
+      // record win/loss only for online (human) games, skip AI and draws
+      if (this.mode === 'online' && sMine !== sOther) this.reportOnlineResult(sMine > sOther);
     }
     this.showGameOverBox(icon, title, msg, this.mode !== 'online' || true);
   }
 
-  reportResult(won) {
+  reportOnlineResult(won) {
     if (!this.nickname) return;
-    fetch('/api/result', {
+    const opponent = this.names[1 - this.myPlayer];
+    fetch('/api/online-result', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nickname: this.nickname, won })
+      body: JSON.stringify({ nickname: this.nickname, opponent, won })
     }).catch(() => {});
   }
 

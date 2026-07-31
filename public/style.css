@@ -223,6 +223,8 @@ html, body {
 .player-panel.active-turn.opp-turn { box-shadow: 0 0 0 1px var(--opp), 0 0 18px var(--opp-glow); border-color: var(--opp); }
 
 .panel-head { display: flex; justify-content: space-between; align-items: center; padding: 0.1rem 0.3rem 0.4rem; }
+.name-wrap { display: flex; flex-direction: column; gap: 1px; }
+.h2h { font-size: 0.72rem; color: var(--text-dim); font-weight: 600; }
 .player-name { font-weight: 700; font-size: 0.95rem; }
 .player-total { font-weight: 800; font-size: 1.3rem; color: var(--accent); font-variant-numeric: tabular-nums; }
 #panel-top .player-total { color: var(--opp); }

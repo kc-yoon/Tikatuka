@@ -20,22 +20,34 @@ app.use(express.static(path.join(__dirname, 'public')));
 const useDB = !!process.env.DATABASE_URL;
 let pool = null;
 const memUsers = new Map(); // nicknameLower -> { nickname, password, wins, losses }
+const memH2H = new Map();   // `${playerLower}|${oppLower}` -> { wins, losses }
 
 if (useDB) {
   pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
   });
-  pool.query(`
-    CREATE TABLE IF NOT EXISTS tikatuka_users (
-      id SERIAL PRIMARY KEY,
-      nickname VARCHAR(12) NOT NULL,
-      nickname_lower VARCHAR(12) UNIQUE NOT NULL,
-      password VARCHAR(20) NOT NULL,
-      wins INTEGER NOT NULL DEFAULT 0,
-      losses INTEGER NOT NULL DEFAULT 0
-    )
-  `).then(() => console.log('DB 테이블 준비 완료'))
+  Promise.all([
+    pool.query(`
+      CREATE TABLE IF NOT EXISTS tikatuka_users (
+        id SERIAL PRIMARY KEY,
+        nickname VARCHAR(12) NOT NULL,
+        nickname_lower VARCHAR(12) UNIQUE NOT NULL,
+        password VARCHAR(20) NOT NULL,
+        wins INTEGER NOT NULL DEFAULT 0,
+        losses INTEGER NOT NULL DEFAULT 0
+      )
+    `),
+    pool.query(`
+      CREATE TABLE IF NOT EXISTS tikatuka_h2h (
+        player_lower VARCHAR(12) NOT NULL,
+        opponent_lower VARCHAR(12) NOT NULL,
+        wins INTEGER NOT NULL DEFAULT 0,
+        losses INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (player_lower, opponent_lower)
+      )
+    `)
+  ]).then(() => console.log('DB 테이블 준비 완료'))
     .catch(err => console.error('DB 초기화 실패:', err));
 } else {
   console.log('DATABASE_URL 없음 → 인메모리 저장소 사용 (로컬 개발용)');
@@ -62,14 +74,36 @@ const store = {
       memUsers.set(nameLower, { nickname, password, wins: 0, losses: 0 });
     }
   },
-  async addResult(nameLower, won) {
+  // records an online (human vs human) result for `player` against `opponent`
+  async addOnlineResult(playerLower, opponentLower, won) {
+    const col = won ? 'wins' : 'losses';
     if (useDB) {
-      const col = won ? 'wins' : 'losses';
-      await pool.query(`UPDATE tikatuka_users SET ${col} = ${col} + 1 WHERE nickname_lower = $1`, [nameLower]);
+      await pool.query(`UPDATE tikatuka_users SET ${col} = ${col} + 1 WHERE nickname_lower = $1`, [playerLower]);
+      await pool.query(
+        `INSERT INTO tikatuka_h2h (player_lower, opponent_lower, wins, losses)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (player_lower, opponent_lower)
+         DO UPDATE SET ${col} = tikatuka_h2h.${col} + 1`,
+        [playerLower, opponentLower, won ? 1 : 0, won ? 0 : 1]
+      );
     } else {
-      const u = memUsers.get(nameLower);
+      const u = memUsers.get(playerLower);
       if (u) { if (won) u.wins++; else u.losses++; }
+      const key = playerLower + '|' + opponentLower;
+      const h = memH2H.get(key) || { wins: 0, losses: 0 };
+      if (won) h.wins++; else h.losses++;
+      memH2H.set(key, h);
     }
+  },
+  async getH2H(playerLower, opponentLower) {
+    if (useDB) {
+      const r = await pool.query(
+        'SELECT wins, losses FROM tikatuka_h2h WHERE player_lower = $1 AND opponent_lower = $2',
+        [playerLower, opponentLower]
+      );
+      return r.rows[0] || { wins: 0, losses: 0 };
+    }
+    return memH2H.get(playerLower + '|' + opponentLower) || { wins: 0, losses: 0 };
   },
   async leaderboard() {
     if (useDB) {
@@ -120,15 +154,28 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-app.post('/api/result', async (req, res) => {
+// online (human) result only — updates ranking totals + head-to-head
+app.post('/api/online-result', async (req, res) => {
   const name = (req.body.nickname || '').trim();
+  const opp = (req.body.opponent || '').trim();
   const won = !!req.body.won;
-  if (!name) return res.json({ ok: false });
+  if (!name || !opp) return res.json({ ok: false });
   try {
-    await store.addResult(name.toLowerCase(), won);
+    await store.addOnlineResult(name.toLowerCase(), opp.toLowerCase(), won);
     res.json({ ok: true });
   } catch (err) {
     res.json({ ok: false });
+  }
+});
+
+app.get('/api/h2h', async (req, res) => {
+  const player = (req.query.player || '').trim();
+  const opponent = (req.query.opponent || '').trim();
+  if (!player || !opponent) return res.json({ wins: 0, losses: 0 });
+  try {
+    res.json(await store.getH2H(player.toLowerCase(), opponent.toLowerCase()));
+  } catch (err) {
+    res.json({ wins: 0, losses: 0 });
   }
 });
 
