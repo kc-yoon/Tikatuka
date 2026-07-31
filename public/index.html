@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>티카투카</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ===== MENU ===== -->
+  <div id="screen-menu" class="screen active">
+    <div class="menu-container">
+      <div class="logo">
+        <div class="logo-dice">
+          <div class="die-face big" data-pips="5">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <div class="die-face big" data-pips="3">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+        <h1>티카투카</h1>
+        <p class="subtitle">Knucklebones</p>
+      </div>
+      <div class="nickname-section">
+        <label for="nickname-input">닉네임</label>
+        <input type="text" id="nickname-input" maxlength="12" placeholder="닉네임 입력" autocomplete="off">
+      </div>
+      <div class="menu-buttons">
+        <button class="btn btn-primary" onclick="app.showOnlineLobby()">
+          <span class="btn-icon">&#9860;</span> 온라인 대전
+        </button>
+        <button class="btn btn-secondary" onclick="app.showAISetup()">
+          <span class="btn-icon">&#9881;</span> AI 대전
+        </button>
+        <button class="btn btn-secondary" onclick="app.startLocal()">
+          <span class="btn-icon">&#128101;</span> 로컬 2인
+        </button>
+        <button class="btn btn-ghost" onclick="app.showRules()">규칙 보기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== ONLINE LOBBY ===== -->
+  <div id="screen-online" class="screen">
+    <div class="panel-container">
+      <button class="btn-back" onclick="app.showMenu()">&larr; 뒤로</button>
+      <h2>온라인 대전</h2>
+      <div class="lobby-section">
+        <button class="btn btn-primary" onclick="app.createRoom()">방 만들기</button>
+      </div>
+      <div class="divider"><span>또는</span></div>
+      <div class="lobby-section">
+        <label for="room-code-input">방 코드 입력</label>
+        <input type="text" id="room-code-input" maxlength="4" placeholder="ABCD"
+               style="text-transform:uppercase" autocomplete="off">
+        <button class="btn btn-secondary" onclick="app.joinRoom()">참가하기</button>
+      </div>
+      <p id="lobby-message" class="lobby-msg"></p>
+    </div>
+  </div>
+
+  <!-- ===== WAITING ROOM ===== -->
+  <div id="screen-waiting" class="screen">
+    <div class="panel-container">
+      <h2>대기 중...</h2>
+      <p>상대방에게 이 코드를 공유하세요:</p>
+      <div class="room-code-display" id="room-code-display">----</div>
+      <button class="btn btn-ghost" onclick="app.copyRoomCode()">코드 복사</button>
+      <div class="spinner"></div>
+      <p class="dim">상대방을 기다리는 중...</p>
+      <button class="btn btn-ghost" onclick="app.leaveRoom()">나가기</button>
+    </div>
+  </div>
+
+  <!-- ===== AI SETUP ===== -->
+  <div id="screen-ai" class="screen">
+    <div class="panel-container">
+      <button class="btn-back" onclick="app.showMenu()">&larr; 뒤로</button>
+      <h2>AI 대전</h2>
+      <p>난이도를 선택하세요</p>
+      <div class="difficulty-buttons">
+        <button class="btn btn-secondary" onclick="app.startAI('easy')">
+          <strong>쉬움</strong><br><small>무작위로 두는 AI</small>
+        </button>
+        <button class="btn btn-primary" onclick="app.startAI('medium')">
+          <strong>보통</strong><br><small>점수를 계산하는 AI</small>
+        </button>
+        <button class="btn btn-secondary" onclick="app.startAI('hard')">
+          <strong>어려움</strong><br><small>수를 읽는 AI</small>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== GAME ===== -->
+  <div id="screen-game" class="screen">
+    <div class="game-layout">
+      <!-- Opponent (top) -->
+      <div class="player-panel" id="panel-top">
+        <div class="panel-head">
+          <span class="player-name" id="name-top">상대</span>
+          <span class="player-total" id="total-top">0</span>
+        </div>
+        <div class="board opponent" id="board-top"></div>
+      </div>
+
+      <!-- Center: turn + die -->
+      <div class="center-bar">
+        <div class="turn-label" id="turn-label">게임 시작!</div>
+        <div class="die-stage" id="die-stage">
+          <div class="die-face rolled" id="current-die" data-pips="0"></div>
+        </div>
+      </div>
+
+      <!-- Me (bottom) -->
+      <div class="player-panel" id="panel-bottom">
+        <div class="board mine" id="board-bottom"></div>
+        <div class="panel-head">
+          <span class="player-name" id="name-bottom">나</span>
+          <span class="player-total" id="total-bottom">0</span>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="game-controls">
+        <button class="btn btn-ghost btn-sm" onclick="app.exitGame()">나가기</button>
+        <button class="btn btn-ghost btn-sm" id="btn-chat-toggle" onclick="app.toggleChat()" style="display:none">
+          채팅 <span class="chat-badge" id="chat-badge"></span>
+        </button>
+      </div>
+
+      <!-- Chat panel -->
+      <div class="chat-panel" id="chat-panel">
+        <div class="chat-header">
+          <span>채팅</span>
+          <button class="btn-close-sm" onclick="app.toggleChat()">&times;</button>
+        </div>
+        <div class="chat-messages" id="chat-messages"></div>
+        <div class="chat-input-row">
+          <input type="text" id="chat-input" maxlength="100" placeholder="메시지 입력..."
+                 autocomplete="off" onkeydown="if(event.key==='Enter')app.sendChat()">
+          <button class="chat-send-btn" onclick="app.sendChat()">&#9654;</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== RULES OVERLAY ===== -->
+  <div id="overlay-rules" class="overlay">
+    <div class="overlay-content rules-content">
+      <button class="btn-close" onclick="app.closeOverlay()">&times;</button>
+      <h2>게임 규칙</h2>
+      <div class="rules-body">
+        <section>
+          <h3>기본</h3>
+          <p>두 플레이어가 각자 <strong>3×3 판</strong>을 가집니다. 자기 차례에 주사위를 굴려 나온 눈을 <strong>자기 판의 한 열(세로줄)</strong>에 놓습니다.</p>
+        </section>
+        <section>
+          <h3>점수 계산</h3>
+          <p>같은 열에 <strong>같은 숫자</strong>가 여러 개면 점수가 배로 커집니다.</p>
+          <ul>
+            <li><code>3</code> 하나 → 3점</li>
+            <li><code>3</code> 두 개 → (3+3)×2 = <strong>12점</strong></li>
+            <li><code>3</code> 세 개 → (3+3+3)×3 = <strong>27점</strong></li>
+          </ul>
+        </section>
+        <section>
+          <h3>상대 말 제거</h3>
+          <p>내가 어떤 열에 숫자를 놓으면, <strong>상대의 같은 열에 있는 같은 숫자는 모두 사라집니다.</strong> 이걸로 상대의 고득점 열을 무너뜨릴 수 있습니다.</p>
+        </section>
+        <section>
+          <h3>승리 조건</h3>
+          <p>한 명의 판이 <strong>가득 차면</strong> 게임이 끝나고, <strong>총점이 높은 사람이 승리</strong>합니다.</p>
+        </section>
+      </div>
+      <button class="btn btn-primary" onclick="app.closeOverlay()">확인</button>
+    </div>
+  </div>
+
+  <!-- ===== GAME OVER OVERLAY ===== -->
+  <div id="overlay-gameover" class="overlay">
+    <div class="overlay-content gameover-content">
+      <div class="gameover-icon" id="gameover-icon"></div>
+      <h2 id="gameover-title">게임 종료</h2>
+      <p id="gameover-message"></p>
+      <div class="gameover-buttons">
+        <button class="btn btn-primary" id="btn-rematch" onclick="app.rematch()">다시 하기</button>
+        <button class="btn btn-ghost" onclick="app.exitGame()">메뉴로</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
