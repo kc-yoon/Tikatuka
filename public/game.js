@@ -201,7 +201,31 @@ class App {
     document.getElementById('password-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.login();
     });
+    // tap the die to roll
+    document.getElementById('die-stage').addEventListener('click', () => this.doRoll());
+    // keep the board fitted to the screen
+    const onResize = () => this.sizeBoards();
+    window.addEventListener('resize', onResize);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
     if (this.nickname) this.showMenuButtons();
+  }
+
+  // size board cells so both boards + chrome always fit the viewport height
+  sizeBoards() {
+    const layout = document.querySelector('#screen-game .game-layout');
+    if (!layout || !document.getElementById('screen-game').classList.contains('active')) return;
+    const vw = Math.min(window.innerWidth, 460);
+    const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    const root = document.documentElement;
+    // start from a width-based estimate, then shrink until it fits vertically
+    let cell = Math.min(Math.floor((vw - 34) / 3), Math.floor((vh - 150) / 6), 88);
+    cell = Math.max(cell, 32);
+    root.style.setProperty('--cell', cell + 'px');
+    for (let i = 0; i < 60 && cell > 30; i++) {
+      if (layout.scrollHeight <= layout.clientHeight + 1) break;
+      cell -= 2;
+      root.style.setProperty('--cell', cell + 'px');
+    }
   }
 
   // ---------- auth ----------
@@ -389,6 +413,7 @@ class App {
     this.setupBoardLabels();
     this.renderBoards();
     this.showScreen('screen-game');
+    this.sizeBoards();
     this.startTurn();
   }
 
@@ -413,26 +438,47 @@ class App {
   startTurn() {
     if (this.gameOver) return;
     this.currentDie = 0;
+    this.awaitingRoll = false;
     this.renderDie(0, false);
     this.updateTurnUI();
     this.disablePlacement();
 
     if (this.mode === 'ai') {
-      this.rollDie((v) => {
-        if (this.turn === this.aiPlayer) this.scheduleAIMove();
-        else this.enablePlacement();
-      });
-    } else if (this.mode === 'local') {
-      this.rollDie(() => this.enablePlacement());
-    } else { // online
-      if (this.turn === this.myPlayer) {
-        this.rollDie((v) => {
-          this.net.sendAction({ type: 'roll', player: this.myPlayer, die: v });
-          this.enablePlacement();
-        });
+      if (this.turn === this.aiPlayer) {
+        this.rollDie((v) => this.scheduleAIMove());   // AI rolls automatically
+      } else {
+        this.promptRoll();                            // human taps to roll
       }
+    } else if (this.mode === 'local') {
+      this.promptRoll();
+    } else { // online
+      if (this.turn === this.myPlayer) this.promptRoll();
       // else: wait for opponent's 'roll' action
     }
+  }
+
+  // show the die as a tappable "roll" button for the active human
+  promptRoll() {
+    this.awaitingRoll = true;
+    this.renderDie(0, !this.isBottom(this.turn));
+    document.getElementById('die-stage').classList.add('rollable');
+    const label = document.getElementById('turn-label');
+    label.classList.add('my-turn');
+    const who = this.mode === 'local' ? this.names[this.turn] + ' · ' : '';
+    label.textContent = who + '주사위를 탭하세요';
+  }
+
+  // triggered when the human taps the die
+  doRoll() {
+    if (!this.awaitingRoll || this.rolling || this.gameOver) return;
+    this.awaitingRoll = false;
+    document.getElementById('die-stage').classList.remove('rollable');
+    this.rollDie((v) => {
+      if (this.mode === 'online' && this.turn === this.myPlayer) {
+        this.net.sendAction({ type: 'roll', player: this.myPlayer, die: v });
+      }
+      this.enablePlacement();
+    });
   }
 
   rollDie(cb) {
@@ -446,14 +492,15 @@ class App {
     let ticks = 0;
     const iv = setInterval(() => {
       setDie(el, 1 + Math.floor(Math.random() * 6), opp);
-      if (++ticks >= 5) {
+      if (++ticks >= 9) {
         clearInterval(iv);
         this.currentDie = v;
         this.renderDie(v, opp);
+        el.classList.remove('rolling');
         this.rolling = false;
         if (cb) cb(v);
       }
-    }, 90);
+    }, 75);
   }
 
   renderDie(value, opp) {
