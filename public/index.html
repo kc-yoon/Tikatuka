@@ -125,7 +125,10 @@
             <span class="player-name" id="name-top">상대</span>
             <span class="h2h" id="h2h-record" style="display:none"></span>
           </div>
-          <span class="player-total" id="total-top">0</span>
+          <div class="head-right">
+            <span class="shield-count" id="shields-top"></span>
+            <span class="player-total" id="total-top">0</span>
+          </div>
         </div>
         <div class="board opponent" id="board-top"></div>
       </div>
@@ -143,13 +146,18 @@
         <div class="board mine" id="board-bottom"></div>
         <div class="panel-head">
           <span class="player-name" id="name-bottom">나</span>
-          <span class="player-total" id="total-bottom">0</span>
+          <div class="head-right">
+            <span class="shield-count" id="shields-bottom"></span>
+            <span class="player-total" id="total-bottom">0</span>
+          </div>
         </div>
       </div>
 
       <!-- Controls -->
       <div class="game-controls">
         <button class="btn btn-ghost btn-sm" onclick="app.exitGame()">나가기</button>
+        <button class="btn btn-action btn-sm" id="btn-reroll" onclick="app.doReroll()" style="display:none">🔄 리롤</button>
+        <button class="btn btn-action btn-sm" id="btn-shield" onclick="app.toggleShieldMode()" style="display:none">🛡️ 실드</button>
         <button class="btn btn-ghost btn-sm" id="btn-chat-toggle" onclick="app.toggleChat()" style="display:none">
           채팅 <span class="chat-badge" id="chat-badge"></span>
         </button>
@@ -179,24 +187,34 @@
       <div class="rules-body">
         <section>
           <h3>기본</h3>
-          <p>두 플레이어가 각자 <strong>3×3 판</strong>을 가집니다. 자기 차례에 주사위를 굴려 나온 눈을 <strong>자기 판의 한 열(세로줄)</strong>에 놓습니다.</p>
+          <p>각자 <strong>3×3 판</strong>을 가지고, 자기 차례에 주사위를 <strong>탭해서 굴린</strong> 뒤 나온 눈을 <strong>자기 판의 한 열</strong>에 놓습니다.</p>
         </section>
         <section>
           <h3>점수 계산</h3>
           <p>같은 열에 <strong>같은 숫자</strong>가 여러 개면 점수가 배로 커집니다.</p>
           <ul>
-            <li><code>3</code> 하나 → 3점</li>
-            <li><code>3</code> 두 개 → (3+3)×2 = <strong>12점</strong></li>
-            <li><code>3</code> 세 개 → (3+3+3)×3 = <strong>27점</strong></li>
+            <li><code>3</code> 하나 → 3점 / 두 개 → <strong>12점</strong> / 세 개 → <strong>27점</strong></li>
           </ul>
         </section>
         <section>
-          <h3>상대 말 제거</h3>
-          <p>내가 어떤 열에 숫자를 놓으면, <strong>상대의 같은 열에 있는 같은 숫자는 모두 사라집니다.</strong> 이걸로 상대의 고득점 열을 무너뜨릴 수 있습니다.</p>
+          <h3>알까기 (상대 제거)</h3>
+          <p>일반 주사위를 놓았을 때 <strong>상대 같은 열의 같은 숫자 일반 주사위가 모두 제거</strong>됩니다. 성공하면 <strong>실드 주사위 1개를 획득</strong>합니다. (실드는 제거되지 않음)</p>
         </section>
         <section>
-          <h3>승리 조건</h3>
-          <p>한 명의 판이 <strong>가득 차면</strong> 게임이 끝나고, <strong>총점이 높은 사람이 승리</strong>합니다.</p>
+          <h3>🛡️ 실드 주사위</h3>
+          <p>알까기로 얻습니다. <strong>실드 모드</strong>로 놓으면 <strong>알까기로 안 지워집니다.</strong></p>
+          <ul>
+            <li>내 판에 놓기 → 점수로 계산 + 방어</li>
+            <li>상대 판에 놓기 → 상대 칸을 <strong>막는 블로커</strong>(상대 점수 0, 칸 차지)</li>
+          </ul>
+        </section>
+        <section>
+          <h3>🔄 리롤</h3>
+          <p>게임당 <strong>1회</strong>, 굴린 주사위가 맘에 안 들면 다시 굴릴 수 있습니다.</p>
+        </section>
+        <section>
+          <h3>승리 조건 (라인 승부)</h3>
+          <p>한 명의 판이 가득 차면 종료. <strong>3줄 중 2줄 이상</strong> 이긴 사람이 승리하고, 줄 승수가 같으면 <strong>총점</strong>으로 판정합니다.</p>
         </section>
       </div>
       <button class="btn btn-primary" onclick="app.closeOverlay()">확인</button>

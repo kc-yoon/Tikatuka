@@ -224,6 +224,9 @@ html, body {
 
 .panel-head { display: flex; justify-content: space-between; align-items: center; padding: 0.1rem 0.3rem 0.4rem; }
 .name-wrap { display: flex; flex-direction: column; gap: 1px; }
+.head-right { display: flex; align-items: center; gap: 0.5rem; }
+.shield-count { font-size: 0.85rem; font-weight: 700; color: var(--accent); }
+.shield-count:empty { display: none; }
 .h2h { font-size: 0.72rem; color: var(--text-dim); font-weight: 600; }
 .player-name { font-weight: 700; font-size: 0.95rem; }
 .player-total { font-weight: 800; font-size: 1.3rem; color: var(--accent); font-variant-numeric: tabular-nums; }
@@ -242,9 +245,9 @@ html, body {
   border: 1px solid transparent;
   transition: border-color 0.15s, background 0.15s;
 }
-.board.mine .board-col { cursor: default; }
-.board.mine.can-place .board-col.placeable { cursor: pointer; }
-.board.mine.can-place .board-col.placeable:hover { border-color: var(--accent); background: rgba(232,168,56,0.08); }
+.board-col { cursor: default; }
+.board.can-place .board-col.placeable { cursor: pointer; }
+.board.can-place .board-col.placeable:hover { border-color: var(--accent); background: rgba(232,168,56,0.08); }
 .col-score {
   text-align: center;
   font-size: 0.7rem;
@@ -269,6 +272,16 @@ html, body {
   border: none;
 }
 .slot .die-face.pop { animation: pop 0.2s ease; }
+/* shield die: immune to removal — cyan ring */
+.slot .die-face.shield { box-shadow: 0 0 0 3px #16324a, 0 0 0 4px #38d0e8; }
+.slot .die-face.shield::before {
+  content: '🛡'; position: absolute; top: -6px; right: -4px;
+  font-size: calc(var(--cell) * 0.32); line-height: 1;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.5));
+}
+.slot .die-face { position: relative; }
+/* blocker: opponent-board shield (scores 0) — greyed out */
+.slot .die-face.blocker { filter: grayscale(1) brightness(0.7); opacity: 0.85; }
 @keyframes pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 .slot.clearing { animation: clearFlash 0.4s ease; }
 @keyframes clearFlash {
@@ -323,7 +336,15 @@ html, body {
 }
 
 /* ===== CONTROLS ===== */
-.game-controls { display: flex; justify-content: space-between; align-items: center; padding: 0 0.3rem; }
+.game-controls { display: flex; justify-content: space-between; align-items: center; gap: 0.4rem; padding: 0 0.3rem; }
+.btn-action {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+}
+.btn-action.active { background: var(--accent); border-color: var(--accent); color: #1a1208; }
+.btn-action:disabled { opacity: 0.4; }
 .chat-badge {
   display: inline-block; min-width: 16px; height: 16px; line-height: 16px;
   background: var(--danger); color: #fff; border-radius: 8px; font-size: 0.7rem;

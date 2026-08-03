@@ -23,15 +23,13 @@ function setDie(el, value, opp) {
 }
 
 // ==================== GAME RULES ====================
+// A die is { v: 1..6, s: shield(immune to removal), b: blocker(scores 0) }.
 
 function columnScore(col) {
   const counts = {};
-  for (const v of col) counts[v] = (counts[v] || 0) + 1;
+  for (const d of col) { if (d.b) continue; counts[d.v] = (counts[d.v] || 0) + 1; }
   let s = 0;
-  for (const v in counts) {
-    const k = counts[v];
-    s += Number(v) * k * k;
-  }
+  for (const v in counts) { const k = counts[v]; s += Number(v) * k * k; }
   return s;
 }
 
@@ -40,22 +38,12 @@ function playerScore(grid) {
 }
 
 function cloneGrids(grids) {
-  return grids.map(g => g.map(col => col.slice()));
-}
-
-// player places `die` in column `col`; opponent's matching dice in that column are removed
-function applyMove(grids, player, col, die) {
-  grids[player][col].push(die);
-  const opp = 1 - player;
-  grids[opp][col] = grids[opp][col].filter(v => v !== die);
-  return grids;
+  return grids.map(g => g.map(col => col.map(d => ({ v: d.v, s: d.s, b: d.b }))));
 }
 
 function boardFull(grid) {
   return grid.every(col => col.length >= 3);
 }
-
-// ==================== AI ====================
 
 function validColumns(grid) {
   const cols = [];
@@ -63,10 +51,33 @@ function validColumns(grid) {
   return cols;
 }
 
-function aiChoose(grids, aiP, die, difficulty) {
-  const cols = validColumns(grids[aiP]);
+// simulate a NORMAL die placement (with 알까기 removal of opponent normals)
+function simNormal(grids, placer, col, value) {
+  const g = cloneGrids(grids);
+  g[placer][col].push({ v: value, s: false, b: false });
+  const opp = 1 - placer;
+  g[opp][col] = g[opp][col].filter(d => d.s || d.v !== value);
+  return g;
+}
+
+function linesWon(grids, p) {
+  let w = 0;
+  for (let c = 0; c < 3; c++) if (columnScore(grids[p][c]) > columnScore(grids[1 - p][c])) w++;
+  return w;
+}
+
+// heuristic value of a board from p's perspective (line wins dominate, then total)
+function evalDiff(grids, p) {
+  const o = 1 - p;
+  return (linesWon(grids, p) - linesWon(grids, o)) * 50 +
+         (playerScore(grids[p]) - playerScore(grids[o]));
+}
+
+// ==================== AI ====================
+
+function aiChoose(grids, ai, value, difficulty) {
+  const cols = validColumns(grids[ai]);
   if (cols.length === 0) return 0;
-  const oppP = 1 - aiP;
 
   if (difficulty === 'easy') {
     return cols[Math.floor(Math.random() * cols.length)];
@@ -75,35 +86,29 @@ function aiChoose(grids, aiP, die, difficulty) {
   if (difficulty === 'medium') {
     let best = cols[0], bestVal = -Infinity;
     for (const c of cols) {
-      const before = columnScore(grids[aiP][c]);
-      const afterCol = grids[aiP][c].concat(die);
-      const gain = columnScore(afterCol) - before;
-      const oppBefore = columnScore(grids[oppP][c]);
-      const oppAfter = columnScore(grids[oppP][c].filter(v => v !== die));
-      const removal = oppBefore - oppAfter;
-      const val = gain + removal;
+      const val = evalDiff(simNormal(grids, ai, c, value), ai);
       if (val > bestVal) { bestVal = val; best = c; }
     }
     return best;
   }
 
-  // hard: 2-ply expectiminimax (my move, then opponent's expected best reply)
+  // hard: my move, then opponent's expected best reply (averaged over dice)
   let best = cols[0], bestVal = -Infinity;
   for (const c of cols) {
-    const g1 = applyMove(cloneGrids(grids), aiP, c, die);
+    const g1 = simNormal(grids, ai, c, value);
     let evalSum = 0;
-    if (boardFull(g1[aiP])) {
-      evalSum = (playerScore(g1[aiP]) - playerScore(g1[oppP])) * 6;
+    if (boardFull(g1[ai]) || boardFull(g1[1 - ai])) {
+      evalSum = evalDiff(g1, ai) * 6;
     } else {
+      const opp = 1 - ai;
       for (let e = 1; e <= 6; e++) {
-        const oppCols = validColumns(g1[oppP]);
+        const oppCols = validColumns(g1[opp]);
         let oppBest = -Infinity;
         for (const oc of oppCols) {
-          const g2 = applyMove(cloneGrids(g1), oppP, oc, e);
-          const diff = playerScore(g2[oppP]) - playerScore(g2[aiP]);
-          if (diff > oppBest) oppBest = diff;
+          const g2 = simNormal(g1, opp, oc, e);
+          oppBest = Math.max(oppBest, evalDiff(g2, opp));
         }
-        if (oppBest === -Infinity) oppBest = playerScore(g1[oppP]) - playerScore(g1[aiP]);
+        if (oppBest === -Infinity) oppBest = evalDiff(g1, opp);
         evalSum += -oppBest; // from my perspective
       }
     }
@@ -111,6 +116,18 @@ function aiChoose(grids, aiP, die, difficulty) {
     if (val > bestVal) { bestVal = val; best = c; }
   }
   return best;
+}
+
+// occasionally block a very strong opponent column with a shield, else null
+function aiShieldTarget(grids, ai) {
+  const opp = 1 - ai;
+  let best = null, bestScore = 9; // only block columns worth 10+ (rare)
+  for (let c = 0; c < 3; c++) {
+    if (grids[opp][c].length >= 3) continue;
+    const s = columnScore(grids[opp][c]);
+    if (s > bestScore) { bestScore = s; best = c; }
+  }
+  return best === null ? null : { target: opp, col: best };
 }
 
 // ==================== NETWORK ====================
@@ -169,17 +186,22 @@ class App {
   constructor() {
     this.net = new Net();
     this.mode = null;          // 'ai' | 'online' | 'local'
-    this.grids = null;         // [ [col,col,col], [col,col,col] ]
+    this.grids = null;         // [ [col,col,col], [col,col,col] ] of die objects
     this.turn = 0;             // whose turn (player index)
     this.currentDie = 0;       // rolled value awaiting placement (0 = none)
     this.gameOver = false;
     this.rolling = false;
+    this.awaitingRoll = false;
 
-    this.myPlayer = 0;         // which index "I" control (bottom board)
+    this.shields = [0, 0];     // shield tokens per player
+    this.rerollUsed = [false, false];
+    this.placeMode = 'normal'; // 'normal' | 'shield'
+
+    this.myPlayer = 0;
     this.aiPlayer = 1;
     this.difficulty = 'medium';
     this.names = ['Player 1', 'Player 2'];
-    this.lastPlaced = null;    // {player, col} for pop animation
+    this.lastPlaced = null;
     this.pendingRematch = false;
     this.chatUnread = 0;
 
@@ -190,7 +212,6 @@ class App {
 
   // ---------- init ----------
   initUI() {
-    // fill logo dice
     document.querySelectorAll('.logo-dice .die-face').forEach((el, i) => {
       setDie(el, i === 0 ? 5 : 3, i === 1);
       if (i === 1) el.classList.add('alt');
@@ -201,23 +222,19 @@ class App {
     document.getElementById('password-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.login();
     });
-    // tap the die to roll
     document.getElementById('die-stage').addEventListener('click', () => this.doRoll());
-    // keep the board fitted to the screen
     const onResize = () => this.sizeBoards();
     window.addEventListener('resize', onResize);
     if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
     if (this.nickname) this.showMenuButtons();
   }
 
-  // size board cells so both boards + chrome always fit the viewport height
   sizeBoards() {
     const layout = document.querySelector('#screen-game .game-layout');
     if (!layout || !document.getElementById('screen-game').classList.contains('active')) return;
     const vw = Math.min(window.innerWidth, 460);
     const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
     const root = document.documentElement;
-    // start from a width-based estimate, then shrink until it fits vertically
     let cell = Math.min(Math.floor((vw - 34) / 3), Math.floor((vh - 150) / 6), 88);
     cell = Math.max(cell, 32);
     root.style.setProperty('--cell', cell + 'px');
@@ -300,7 +317,6 @@ class App {
         html += '<div class="lb-row' + me + '"><span class="lb-rank">' + (i + 1) + '</span>' +
                 '<span class="lb-name"></span><span class="lb-w">' + r.wins + '</span>' +
                 '<span class="lb-l">' + r.losses + '</span></div>';
-        // set name via textContent to avoid injection
       });
       list.innerHTML = html;
       const nameCells = list.querySelectorAll('.lb-row:not(.lb-head) .lb-name');
@@ -408,6 +424,9 @@ class App {
     this.gameOver = false;
     this.lastPlaced = null;
     this.pendingRematch = false;
+    this.shields = [0, 0];
+    this.rerollUsed = [false, false];
+    this.placeMode = 'normal';
     document.getElementById('chat-messages').innerHTML = '';
     this.closeOverlay();
     this.setupBoardLabels();
@@ -421,7 +440,6 @@ class App {
     this.startTurn();
   }
 
-  // fetch and show head-to-head record vs the current online opponent
   async loadH2H() {
     const opponent = this.names[1 - this.myPlayer];
     const me = this.nickname;
@@ -438,20 +456,15 @@ class App {
   }
 
   // ---------- perspective ----------
-  bottomPlayer() {
-    if (this.mode === 'online') return this.myPlayer;
-    return 0;
-  }
+  bottomPlayer() { return this.mode === 'online' ? this.myPlayer : 0; }
   topPlayer() { return 1 - this.bottomPlayer(); }
-
   isBottom(player) { return player === this.bottomPlayer(); }
 
-  // can the local human place right now for the active turn?
   humanControlsActive() {
     if (this.gameOver || !this.currentDie) return false;
     if (this.mode === 'ai') return this.turn === this.myPlayer;
     if (this.mode === 'online') return this.turn === this.myPlayer;
-    return true; // local: human always places
+    return true; // local
   }
 
   // ---------- turn flow ----------
@@ -459,25 +472,21 @@ class App {
     if (this.gameOver) return;
     this.currentDie = 0;
     this.awaitingRoll = false;
+    this.placeMode = 'normal';
     this.renderDie(0, false);
     this.updateTurnUI();
     this.disablePlacement();
 
     if (this.mode === 'ai') {
-      if (this.turn === this.aiPlayer) {
-        this.rollDie((v) => this.scheduleAIMove());   // AI rolls automatically
-      } else {
-        this.promptRoll();                            // human taps to roll
-      }
+      if (this.turn === this.aiPlayer) this.rollDie(() => this.scheduleAIMove());
+      else this.promptRoll();
     } else if (this.mode === 'local') {
       this.promptRoll();
-    } else { // online
+    } else {
       if (this.turn === this.myPlayer) this.promptRoll();
-      // else: wait for opponent's 'roll' action
     }
   }
 
-  // show the die as a tappable "roll" button for the active human
   promptRoll() {
     this.awaitingRoll = true;
     this.renderDie(0, !this.isBottom(this.turn));
@@ -488,7 +497,6 @@ class App {
     label.textContent = who + '주사위를 탭하세요';
   }
 
-  // triggered when the human taps the die
   doRoll() {
     if (!this.awaitingRoll || this.rolling || this.gameOver) return;
     this.awaitingRoll = false;
@@ -497,6 +505,20 @@ class App {
       if (this.mode === 'online' && this.turn === this.myPlayer) {
         this.net.sendAction({ type: 'roll', player: this.myPlayer, die: v });
       }
+      this.enablePlacement();
+    });
+  }
+
+  doReroll() {
+    if (this.gameOver || this.rolling || !this.currentDie) return;
+    if (!this.humanControlsActive()) return;
+    const p = this.turn;
+    if (this.rerollUsed[p]) return;
+    this.rerollUsed[p] = true;
+    this.placeMode = 'normal';
+    this.disablePlacement();
+    this.rollDie((v) => {
+      if (this.mode === 'online') this.net.sendAction({ type: 'roll', player: p, die: v });
       this.enablePlacement();
     });
   }
@@ -524,44 +546,82 @@ class App {
   }
 
   renderDie(value, opp) {
-    const el = document.getElementById('current-die');
-    setDie(el, value, opp);
+    setDie(document.getElementById('current-die'), value, opp);
   }
 
-  scheduleAIMove() {
-    setTimeout(() => {
-      if (this.gameOver) return;
-      const col = aiChoose(this.grids, this.aiPlayer, this.currentDie, this.difficulty);
-      this.applyPlacement(this.aiPlayer, col, this.currentDie);
-    }, 750);
+  // ---------- AI ----------
+  scheduleAIMove() { setTimeout(() => this.aiAct(), 700); }
+
+  aiAct() {
+    if (this.gameOver) return;
+    const ai = this.aiPlayer;
+    if (this.difficulty === 'hard' && this.currentDie <= 2 && !this.rerollUsed[ai]) {
+      this.rerollUsed[ai] = true;
+      this.rollDie(() => setTimeout(() => this.aiPlace(), 450));
+      return;
+    }
+    this.aiPlace();
   }
 
-  placeCurrent(col) {
+  aiPlace() {
+    if (this.gameOver) return;
+    const ai = this.aiPlayer;
+    const value = this.currentDie;
+    if (this.difficulty !== 'easy' && this.shields[ai] > 0) {
+      const dec = aiShieldTarget(this.grids, ai);
+      if (dec) {
+        this.applyPlacement(ai, dec.target, dec.col, { v: value, s: true, b: dec.target !== ai });
+        return;
+      }
+    }
+    const col = aiChoose(this.grids, ai, value, this.difficulty);
+    this.applyPlacement(ai, ai, col, { v: value, s: false, b: false });
+  }
+
+  // ---------- placement ----------
+  place(owner, col) {
+    if (this.gameOver || this.rolling || !this.currentDie) return;
     if (!this.humanControlsActive()) return;
     const p = this.turn;
-    if (this.grids[p][col].length >= 3) return;
-    const die = this.currentDie;
+    const shield = this.placeMode === 'shield';
+    if (shield && this.shields[p] <= 0) return;
+    if (!shield && owner !== p) return;
+    if (this.grids[owner][col].length >= 3) return;
+    const die = { v: this.currentDie, s: shield, b: shield && owner !== p };
     if (this.mode === 'online') {
-      this.net.sendAction({ type: 'place', player: p, col, die });
+      this.net.sendAction({ type: 'place', player: p, target: owner, col, v: this.currentDie, s: shield });
     }
-    this.applyPlacement(p, col, die);
+    this.applyPlacement(p, owner, col, die);
   }
 
-  applyPlacement(player, col, die) {
+  applyPlacement(placer, owner, col, die) {
     if (this.gameOver) return;
-    applyMove(this.grids, player, col, die);
-    this.lastPlaced = { player, col };
+    this.grids[owner][col].push(die);
+    if (die.s) this.shields[placer] = Math.max(0, this.shields[placer] - 1);
+    if (!die.s) {
+      // 알까기: remove opponent's matching NORMAL dice in this column (shields survive)
+      const opp = 1 - placer;
+      const before = this.grids[opp][col].length;
+      this.grids[opp][col] = this.grids[opp][col].filter(d => d.s || d.v !== die.v);
+      if (before - this.grids[opp][col].length > 0) this.shields[placer]++; // reward
+    }
+    this.lastPlaced = { player: owner, col };
     this.currentDie = 0;
+    this.placeMode = 'normal';
     this.disablePlacement();
     this.renderBoards();
     this.renderDie(0, false);
 
-    if (boardFull(this.grids[player])) {
-      this.endGame();
-      return;
-    }
-    this.turn = 1 - player;
+    if (boardFull(this.grids[0]) || boardFull(this.grids[1])) { this.endGame(); return; }
+    this.turn = 1 - placer;
     setTimeout(() => this.startTurn(), 350);
+  }
+
+  toggleShieldMode() {
+    if (!this.humanControlsActive()) return;
+    if (this.shields[this.turn] <= 0) { this.placeMode = 'normal'; }
+    else this.placeMode = this.placeMode === 'shield' ? 'normal' : 'shield';
+    this.enablePlacement();
   }
 
   // ---------- network actions ----------
@@ -573,7 +633,8 @@ class App {
       this.updateTurnUI();
       this.renderDie(d.die, !this.isBottom(d.player));
     } else if (d.type === 'place') {
-      this.applyPlacement(d.player, d.col, d.die);
+      const die = { v: d.v, s: !!d.s, b: !!d.s && d.target !== d.player };
+      this.applyPlacement(d.player, d.target, d.col, die);
     }
   }
 
@@ -585,9 +646,13 @@ class App {
 
   // ---------- render ----------
   setupBoardLabels() {
-    const bp = this.bottomPlayer(), tp = this.topPlayer();
-    document.getElementById('name-bottom').textContent = this.names[bp];
-    document.getElementById('name-top').textContent = this.names[tp];
+    document.getElementById('name-bottom').textContent = this.names[this.bottomPlayer()];
+    document.getElementById('name-top').textContent = this.names[this.topPlayer()];
+  }
+
+  shieldLabel(p) {
+    const n = this.shields ? this.shields[p] : 0;
+    return n > 0 ? '🛡️' + n : '';
   }
 
   renderBoards() {
@@ -595,6 +660,8 @@ class App {
     this.renderBoard(document.getElementById('board-top'), this.topPlayer(), false);
     document.getElementById('total-bottom').textContent = playerScore(this.grids[this.bottomPlayer()]);
     document.getElementById('total-top').textContent = playerScore(this.grids[this.topPlayer()]);
+    document.getElementById('shields-bottom').textContent = this.shieldLabel(this.bottomPlayer());
+    document.getElementById('shields-top').textContent = this.shieldLabel(this.topPlayer());
   }
 
   renderBoard(el, player, isBottom) {
@@ -605,22 +672,16 @@ class App {
       const col = grid[c];
       const scoreLabel = '<div class="col-score">' + (col.length ? columnScore(col) : '') + '</div>';
       let slots = '';
-      // build 3 slots; bottom board stacks from bottom, top board from top
       for (let row = 0; row < 3; row++) {
-        let value = 0;
-        if (isBottom) {
-          // filled rows are the lower ones: row 2 = col[0], row1 = col[1], row0 = col[2]
-          const idx = col.length - (3 - row);
-          if (idx >= 0) value = col[idx];
-        } else {
-          // filled rows are the upper ones: row0 = col[0], row1 = col[1]...
-          if (row < col.length) value = col[row];
-        }
-        if (value > 0) {
+        let d = null;
+        if (isBottom) { const idx = col.length - (3 - row); if (idx >= 0) d = col[idx]; }
+        else { if (row < col.length) d = col[row]; }
+        if (d) {
           const isNew = this.lastPlaced && this.lastPlaced.player === player &&
                         this.lastPlaced.col === c && this.isTopOfStack(col, isBottom, row);
-          slots += '<div class="slot"><div class="die-face' + (opp ? ' opp' : '') +
-                   (isNew ? ' pop' : '') + '" data-pips="' + value + '">' + dieInner(value) + '</div></div>';
+          let cls = 'die-face' + (opp ? ' opp' : '') + (d.s ? ' shield' : '') +
+                    (d.b ? ' blocker' : '') + (isNew ? ' pop' : '');
+          slots += '<div class="slot"><div class="' + cls + '" data-pips="' + d.v + '">' + dieInner(d.v) + '</div></div>';
         } else {
           slots += '<div class="slot"></div>';
         }
@@ -629,17 +690,11 @@ class App {
       html += '<div class="board-col" data-col="' + c + '">' + inner + '</div>';
     }
     el.innerHTML = html;
-    this.lastPlacedRendered = true;
   }
 
   isTopOfStack(col, isBottom, row) {
-    // the newly placed die is the last element of the column
-    if (isBottom) {
-      const idx = col.length - (3 - row);
-      return idx === col.length - 1;
-    } else {
-      return row === col.length - 1;
-    }
+    if (isBottom) { const idx = col.length - (3 - row); return idx === col.length - 1; }
+    return row === col.length - 1;
   }
 
   updateTurnUI() {
@@ -649,9 +704,8 @@ class App {
     topEl.classList.remove('active-turn', 'opp-turn');
     if (this.gameOver) return;
 
-    const activeBottom = this.isBottom(this.turn);
-    if (activeBottom) bottomEl.classList.add('active-turn');
-    else { topEl.classList.add('active-turn', 'opp-turn'); }
+    if (this.isBottom(this.turn)) bottomEl.classList.add('active-turn');
+    else topEl.classList.add('active-turn', 'opp-turn');
 
     const label = document.getElementById('turn-label');
     label.classList.remove('my-turn');
@@ -668,63 +722,107 @@ class App {
 
   enablePlacement() {
     this.updateTurnUI();
-    if (!this.humanControlsActive()) return;
-    // active player's board
-    const activeBottom = this.isBottom(this.turn);
-    const boardEl = document.getElementById(activeBottom ? 'board-bottom' : 'board-top');
-    boardEl.classList.add('can-place');
-    const grid = this.grids[this.turn];
-    boardEl.querySelectorAll('.board-col').forEach((colEl) => {
-      const c = Number(colEl.dataset.col);
-      if (grid[c].length < 3) {
-        colEl.classList.add('placeable');
-        colEl.onclick = () => this.placeCurrent(c);
-      } else {
-        colEl.classList.remove('placeable');
-        colEl.onclick = null;
-      }
+    this.clearColumnHandlers();
+    const rerollBtn = document.getElementById('btn-reroll');
+    const shieldBtn = document.getElementById('btn-shield');
+
+    if (!this.humanControlsActive()) {
+      rerollBtn.style.display = 'none';
+      shieldBtn.style.display = 'none';
+      return;
+    }
+    const p = this.turn;
+
+    rerollBtn.style.display = this.rerollUsed[p] ? 'none' : '';
+    if (this.shields[p] > 0) {
+      shieldBtn.style.display = '';
+      shieldBtn.textContent = '🛡️ 실드 ' + this.shields[p];
+      shieldBtn.classList.toggle('active', this.placeMode === 'shield');
+    } else {
+      shieldBtn.style.display = 'none';
+      this.placeMode = 'normal';
+    }
+
+    if (this.placeMode === 'shield') {
+      document.getElementById('turn-label').textContent = '🛡️ 실드 놓을 칸 선택 (양쪽 가능)';
+    }
+
+    const boards = [
+      { id: 'board-bottom', owner: this.bottomPlayer() },
+      { id: 'board-top', owner: this.topPlayer() }
+    ];
+    for (const b of boards) {
+      const canHere = this.placeMode === 'shield' ? true : (b.owner === p);
+      if (!canHere) continue;
+      const el = document.getElementById(b.id);
+      el.classList.add('can-place');
+      const grid = this.grids[b.owner];
+      el.querySelectorAll('.board-col').forEach((cE) => {
+        const c = Number(cE.dataset.col);
+        if (grid[c].length < 3) {
+          cE.classList.add('placeable');
+          cE.onclick = () => this.place(b.owner, c);
+        }
+      });
+    }
+  }
+
+  clearColumnHandlers() {
+    ['board-bottom', 'board-top'].forEach(id => {
+      const el = document.getElementById(id);
+      el.classList.remove('can-place');
+      el.querySelectorAll('.board-col').forEach(cE => { cE.classList.remove('placeable'); cE.onclick = null; });
     });
   }
 
   disablePlacement() {
-    ['board-bottom', 'board-top'].forEach(id => {
-      const el = document.getElementById(id);
-      el.classList.remove('can-place');
-      el.querySelectorAll('.board-col').forEach(colEl => {
-        colEl.classList.remove('placeable');
-        colEl.onclick = null;
-      });
-    });
+    this.clearColumnHandlers();
+    document.getElementById('btn-reroll').style.display = 'none';
+    const sb = document.getElementById('btn-shield');
+    sb.style.display = 'none';
+    sb.classList.remove('active');
   }
 
   // ---------- game over ----------
+  lineResult() {
+    let w0 = 0, w1 = 0;
+    for (let c = 0; c < 3; c++) {
+      const s0 = columnScore(this.grids[0][c]), s1 = columnScore(this.grids[1][c]);
+      if (s0 > s1) w0++; else if (s1 > s0) w1++;
+    }
+    const t0 = playerScore(this.grids[0]), t1 = playerScore(this.grids[1]);
+    let winner = null;
+    if (w0 > w1) winner = 0;
+    else if (w1 > w0) winner = 1;
+    else if (t0 > t1) winner = 0;
+    else if (t1 > t0) winner = 1;
+    return { w0, w1, t0, t1, winner };
+  }
+
   endGame() {
     this.gameOver = true;
     this.disablePlacement();
     this.updateTurnUI();
     this.renderBoards();
 
-    const myP = (this.mode === 'local') ? 0 : this.myPlayer;
-    const sMine = playerScore(this.grids[myP]);
-    const sOther = playerScore(this.grids[1 - myP]);
-
+    const { w0, w1, t0, t1, winner } = this.lineResult();
     let icon, title, msg;
+
     if (this.mode === 'local') {
-      const s0 = playerScore(this.grids[0]), s1 = playerScore(this.grids[1]);
-      if (s0 === s1) { icon = '🤝'; title = '무승부'; msg = this.names[0] + ' ' + s0 + ' : ' + s1 + ' ' + this.names[1]; }
-      else {
-        const w = s0 > s1 ? 0 : 1;
-        icon = '🏆'; title = this.names[w] + ' 승리!';
-        msg = this.names[0] + ' ' + s0 + ' : ' + s1 + ' ' + this.names[1];
-      }
+      if (winner === null) { icon = '🤝'; title = '무승부'; }
+      else { icon = '🏆'; title = this.names[winner] + ' 승리!'; }
+      msg = '라인 ' + w0 + ':' + w1 + ' · 총점 ' + t0 + ':' + t1;
     } else {
-      if (sMine === sOther) { icon = '🤝'; title = '무승부'; msg = '나 ' + sMine + ' : ' + sOther + ' 상대'; }
-      else if (sMine > sOther) { icon = '🏆'; title = '승리!'; msg = '나 ' + sMine + ' : ' + sOther + ' 상대'; }
-      else { icon = '😢'; title = '패배'; msg = '나 ' + sMine + ' : ' + sOther + ' 상대'; }
-      // record win/loss only for online (human) games, skip AI and draws
-      if (this.mode === 'online' && sMine !== sOther) this.reportOnlineResult(sMine > sOther);
+      const myP = this.myPlayer;
+      const myL = myP === 0 ? w0 : w1, oppL = myP === 0 ? w1 : w0;
+      const myT = myP === 0 ? t0 : t1, oppT = myP === 0 ? t1 : t0;
+      if (winner === null) icon = '🤝', title = '무승부';
+      else if (winner === myP) icon = '🏆', title = '승리!';
+      else icon = '😢', title = '패배';
+      msg = '라인 ' + myL + ':' + oppL + ' · 총점 ' + myT + ':' + oppT;
+      if (this.mode === 'online' && winner !== null) this.reportOnlineResult(winner === myP);
     }
-    this.showGameOverBox(icon, title, msg, this.mode !== 'online' || true);
+    this.showGameOverBox(icon, title, msg, true);
   }
 
   reportOnlineResult(won) {
@@ -754,7 +852,7 @@ class App {
       btn.disabled = true;
       btn.textContent = '상대 대기 중...';
       this.pendingRematch = true;
-      if (this._rematchAccept) { this.net.acceptRematch(); }
+      if (this._rematchAccept) this.net.acceptRematch();
     } else {
       this.startGame();
     }
@@ -762,12 +860,8 @@ class App {
 
   onRematchRequested() {
     this._rematchAccept = true;
-    if (this.pendingRematch) {
-      this.net.acceptRematch();
-    } else {
-      const btn = document.getElementById('btn-rematch');
-      btn.textContent = '상대가 재대결 요청! 수락';
-    }
+    if (this.pendingRematch) this.net.acceptRematch();
+    else document.getElementById('btn-rematch').textContent = '상대가 재대결 요청! 수락';
   }
 
   startRematch() {
