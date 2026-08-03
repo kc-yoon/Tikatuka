@@ -246,8 +246,8 @@ html, body {
   transition: border-color 0.15s, background 0.15s;
 }
 .board-col { cursor: default; }
-.board.can-place .board-col.placeable { cursor: pointer; }
-.board.can-place .board-col.placeable:hover { border-color: var(--accent); background: rgba(232,168,56,0.08); }
+.board.can-place .board-col.placeable { cursor: pointer; border-color: rgba(255,255,255,0.8); }
+.board.can-place .board-col.placeable:hover { border-color: var(--accent); background: rgba(232,168,56,0.10); }
 .col-score {
   text-align: center;
   font-size: 0.7rem;
@@ -272,16 +272,19 @@ html, body {
   border: none;
 }
 .slot .die-face.pop { animation: pop 0.2s ease; }
-/* shield die: immune to removal — cyan ring */
-.slot .die-face.shield { box-shadow: 0 0 0 3px #16324a, 0 0 0 4px #38d0e8; }
-.slot .die-face.shield::before {
-  content: '🛡'; position: absolute; top: -6px; right: -4px;
-  font-size: calc(var(--cell) * 0.32); line-height: 1;
-  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.5));
-}
 .slot .die-face { position: relative; }
-/* blocker: opponent-board shield (scores 0) — greyed out */
-.slot .die-face.blocker { filter: grayscale(1) brightness(0.7); opacity: 0.85; }
+/* immune (무적) die: bright border, cannot be removed by 알까기 */
+.slot .die-face.immune { box-shadow: 0 0 0 2px var(--bg-board), 0 0 0 4px #f4f4f4; }
+/* 알까기 hit flash on the targeted column */
+.board-col.killed { animation: killFlash 0.5s ease; }
+@keyframes killFlash {
+  0% { background: var(--danger); transform: scale(1.06); }
+  60% { background: rgba(217,72,72,0.4); }
+  100% { background: var(--bg-board); transform: scale(1); }
+}
+/* decided columns at game end */
+.board-col.col-won { border-color: var(--success); background: rgba(72,184,104,0.10); }
+.board-col.col-lost { border-color: var(--danger); background: rgba(217,72,72,0.08); }
 @keyframes pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 .slot.clearing { animation: clearFlash 0.4s ease; }
 @keyframes clearFlash {
