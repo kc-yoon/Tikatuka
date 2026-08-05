@@ -207,7 +207,7 @@ io.on('connection', (socket) => {
   socket.on('createRoom', (data) => {
     const code = generateCode();
     const nickname = (data && data.nickname) || 'Player 1';
-    rooms.set(code, { players: [socket.id], nicknames: { 1: nickname } });
+    rooms.set(code, { players: [socket.id], nicknames: { 1: nickname }, spectators: [] });
     socket.join(code);
     socket.roomCode = code;
     socket.playerNumber = 1;
@@ -232,6 +232,30 @@ io.on('connection', (socket) => {
     socket.emit('roomJoined', { code, playerNumber: 2 });
     io.to(code).emit('gameStart', { players: room.players.length, nicknames: room.nicknames });
     console.log(`[방 참가] ${code} by ${nickname}`);
+  });
+
+  // spectators join a room as viewers (no player slot)
+  socket.on('spectateRoom', (data) => {
+    const code = (data.code || '').toUpperCase().trim();
+    const nickname = data.nickname || '관전자';
+    const room = rooms.get(code);
+    if (!room) return socket.emit('roomError', '존재하지 않는 방입니다.');
+    if (room.players.length < 2) return socket.emit('roomError', '아직 대전이 시작되지 않았습니다.');
+    room.spectators = room.spectators || [];
+    room.spectators.push(socket.id);
+    socket.join(code);
+    socket.roomCode = code;
+    socket.isSpectator = true;
+    socket.nickname = nickname;
+    socket.emit('spectateJoined', { nicknames: room.nicknames });
+    // ask the host for the current game state
+    if (room.players[0]) io.to(room.players[0]).emit('requestSnapshot', { to: socket.id });
+    console.log(`[관전 참가] ${code} by ${nickname}`);
+  });
+
+  // host replies with a state snapshot; relay to the requesting spectator
+  socket.on('snapshot', (data) => {
+    if (data && data.to) io.to(data.to).emit('snapshot', data.state);
   });
 
   socket.on('gameAction', (data) => {
@@ -260,11 +284,15 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     const code = socket.roomCode;
     if (code) {
-      socket.to(code).emit('opponentLeft');
       const room = rooms.get(code);
       if (room) {
-        room.players = room.players.filter(id => id !== socket.id);
-        if (room.players.length === 0) rooms.delete(code);
+        if (socket.isSpectator) {
+          room.spectators = (room.spectators || []).filter(id => id !== socket.id);
+        } else {
+          socket.to(code).emit('opponentLeft');   // a player left
+          room.players = room.players.filter(id => id !== socket.id);
+          if (room.players.length === 0) rooms.delete(code);
+        }
       }
     }
     console.log(`[연결 해제] ${socket.id}`);

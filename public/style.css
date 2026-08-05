@@ -251,26 +251,12 @@ html, body {
 /* 알까기 opportunity: pulsing white outline on the OPPONENT column you can crack */
 .board-col.kill-hint { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,0.6); animation: killHint 1s ease-in-out infinite; }
 @keyframes killHint { 0%,100% { box-shadow: 0 0 0 2px rgba(255,255,255,0.35); } 50% { box-shadow: 0 0 0 3px rgba(255,255,255,0.9); } }
-/* 알까기 hit: opponent dice get knocked out (scatter set per-die via JS vars) */
-.slot .die-face.knockout {
-  animation: knockout 0.55s cubic-bezier(.35,-0.4,.8,.5) forwards;
-  z-index: 6;
-  --kx: 20px; --ky: -80px; --kr: 160deg;
-}
-@keyframes knockout {
-  0%   { transform: translate(0,0) rotate(0) scale(1); opacity: 1; }
-  12%  { transform: translate(0,0) scale(0.82); }                        /* squash on impact */
-  30%  { transform: translate(calc(var(--kx)*0.3), calc(var(--ky)*0.3)) rotate(calc(var(--kr)*0.3)) scale(1.15); }
-  100% { transform: translate(var(--kx), var(--ky)) rotate(var(--kr)) scale(0.2); opacity: 0; }
-}
-/* impact shake on the struck column */
-.board-col.hit { animation: colHit 0.4s ease; }
-@keyframes colHit {
-  0%,100% { transform: translate(0,0); }
-  15% { transform: translate(-4px,2px); }
-  35% { transform: translate(5px,-3px); }
-  55% { transform: translate(-4px,2px); }
-  75% { transform: translate(3px,-1px); }
+/* 알까기: struck dice collide and fall out of the column */
+.slot .die-face.drop { animation: dropOut 0.55s ease-in forwards; z-index: 6; }
+@keyframes dropOut {
+  0%  { transform: translateY(0) rotate(0); opacity: 1; }
+  15% { transform: translateY(-4px) scale(0.94); }        /* small recoil on impact */
+  100% { transform: translateY(98px) rotate(22deg); opacity: 0; }
 }
 .col-score {
   text-align: center;
@@ -297,8 +283,15 @@ html, body {
 }
 .slot .die-face.pop { animation: pop 0.2s ease; }
 .slot .die-face { position: relative; }
-/* immune (무적) die: bright border, cannot be removed by 알까기 */
-.slot .die-face.immune { box-shadow: 0 0 0 2px var(--bg-board), 0 0 0 4px #f4f4f4; }
+/* immune (무적) die: bold bright ring + glow, cannot be removed by 알까기 */
+.slot .die-face.immune {
+  box-shadow: 0 0 0 2px var(--bg-board), 0 0 0 5px #ffffff, 0 0 9px 3px rgba(255,255,255,0.65);
+  animation: immuneGlow 1.6s ease-in-out infinite;
+}
+@keyframes immuneGlow {
+  0%,100% { box-shadow: 0 0 0 2px var(--bg-board), 0 0 0 5px #ffffff, 0 0 8px 2px rgba(255,255,255,0.5); }
+  50%     { box-shadow: 0 0 0 2px var(--bg-board), 0 0 0 5px #ffffff, 0 0 12px 4px rgba(255,255,255,0.9); }
+}
 /* 알까기 hit flash on the targeted column */
 .board-col.killed { animation: killFlash 0.5s ease; }
 @keyframes killFlash {

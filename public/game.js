@@ -95,6 +95,8 @@ class Net {
     this.onRematch = null;
     this.onRematchStart = null;
     this.onChat = null;
+    this.onRequestSnapshot = null;
+    this.onSnapshot = null;
   }
 
   connect() {
@@ -108,8 +110,20 @@ class Net {
       this.socket.on('rematchRequested', () => { if (this.onRematch) this.onRematch(); });
       this.socket.on('rematchStart', () => { if (this.onRematchStart) this.onRematchStart(); });
       this.socket.on('chatMessage', (d) => { if (this.onChat) this.onChat(d); });
+      this.socket.on('requestSnapshot', (d) => { if (this.onRequestSnapshot) this.onRequestSnapshot(d); });
+      this.socket.on('snapshot', (d) => { if (this.onSnapshot) this.onSnapshot(d); });
     });
   }
+
+  spectateRoom(code, nickname) {
+    return new Promise((resolve, reject) => {
+      this.socket.emit('spectateRoom', { code, nickname });
+      this.socket.once('spectateJoined', (d) => resolve(d));
+      this.socket.once('roomError', (msg) => reject(msg));
+    });
+  }
+
+  sendSnapshot(to, state) { if (this.socket) this.socket.emit('snapshot', { to, state }); }
 
   createRoom(nickname) {
     return new Promise((resolve) => {
@@ -158,6 +172,7 @@ class App {
     this.lastPlaced = null;
     this.pendingRematch = false;
     this.chatUnread = 0;
+    this.isSpectator = false;
 
     this.nickname = localStorage.getItem('tikatuka_nickname') || '';
     this.bindNet();
@@ -287,6 +302,8 @@ class App {
     this.net.onRematch = () => this.onRematchRequested();
     this.net.onRematchStart = () => this.startRematch();
     this.net.onChat = (d) => this.receiveChat(d);
+    this.net.onRequestSnapshot = (d) => this.onRequestSnapshot(d);
+    this.net.onSnapshot = (d) => this.onSnapshot(d);
   }
 
   // ---------- screens ----------
@@ -297,6 +314,8 @@ class App {
   showMenu() {
     if (this.mode === 'online') this.net.disconnect();
     this.mode = null;
+    this.isSpectator = false;
+    this.myPlayer = 0;
     this.closeOverlay();
     this.showScreen('screen-menu');
   }
@@ -339,6 +358,66 @@ class App {
   }
 
   leaveRoom() { this.net.disconnect(); this.showMenu(); }
+
+  // ---------- spectate ----------
+  async spectate() {
+    const code = document.getElementById('room-code-input').value.toUpperCase().trim();
+    const msg = document.getElementById('lobby-message');
+    if (code.length !== 4) { msg.textContent = '4자리 코드를 입력하세요.'; return; }
+    try {
+      await this.net.connect();
+      const d = await this.net.spectateRoom(code, this.nickname || '관전자');
+      this.onSpectateJoined(d);
+    } catch (err) {
+      msg.textContent = err || '관전 실패';
+    }
+  }
+
+  onSpectateJoined(data) {
+    this.mode = 'online';
+    this.isSpectator = true;
+    this.myPlayer = null;
+    const nn = data.nicknames || {};
+    this.names = [nn[1] || 'Player 1', nn[2] || 'Player 2'];
+    this.grids = [[[], [], []], [[], [], []]];
+    this.gameOver = false; this.placeAnywhere = false; this.currentDie = 0;
+    this.held = [false, false]; this.rerollUsed = [false, false]; this.immuneFirstUsed = false;
+    document.getElementById('btn-chat-toggle').style.display = '';
+    document.getElementById('h2h-record').style.display = 'none';
+    this.setupBoardLabels();
+    this.renderBoards();
+    this.showScreen('screen-game');
+    this.sizeBoards();
+    document.getElementById('turn-label').textContent = '👁 관전 준비 중...';
+  }
+
+  // host builds a snapshot for a newly-joined spectator
+  onRequestSnapshot(d) {
+    if (this.isSpectator || !this.grids || !d || !d.to) return;
+    this.net.sendSnapshot(d.to, {
+      grids: this.grids, turn: this.turn, currentDie: this.currentDie,
+      held: this.held, rerollUsed: this.rerollUsed, immuneFirstUsed: this.immuneFirstUsed,
+      placeAnywhere: this.placeAnywhere, gameOver: this.gameOver, names: this.names
+    });
+  }
+
+  // spectator loads the snapshot and starts following live actions
+  onSnapshot(state) {
+    if (!this.isSpectator || !state) return;
+    this.grids = state.grids;
+    this.turn = state.turn || 0;
+    this.currentDie = state.currentDie || 0;
+    this.held = state.held || [false, false];
+    this.rerollUsed = state.rerollUsed || [false, false];
+    this.immuneFirstUsed = !!state.immuneFirstUsed;
+    this.placeAnywhere = !!state.placeAnywhere;
+    this.gameOver = !!state.gameOver;
+    this.names = state.names || this.names;
+    this.setupBoardLabels();
+    this.renderBoards();
+    this.renderDie(this.currentDie, this.currentDie ? !this.isBottom(this.turn) : false);
+    this.updateTurnUI();
+  }
 
   onOnlineStart(data) {
     this.mode = 'online';
@@ -408,12 +487,15 @@ class App {
   }
 
   // ---------- perspective ----------
-  bottomPlayer() { return this.mode === 'online' ? this.myPlayer : 0; }
+  bottomPlayer() {
+    if (this.isSpectator) return 0;                    // spectators: P1 bottom, P2 top
+    return this.mode === 'online' ? this.myPlayer : 0;
+  }
   topPlayer() { return 1 - this.bottomPlayer(); }
   isBottom(player) { return player === this.bottomPlayer(); }
 
   humanControlsActive() {
-    if (this.gameOver || !this.currentDie) return false;
+    if (this.gameOver || !this.currentDie || this.isSpectator) return false;
     if (this.mode === 'ai') return this.turn === this.myPlayer;
     if (this.mode === 'online') return this.turn === this.myPlayer;
     return true;
@@ -421,12 +503,13 @@ class App {
 
   // do I generate randomness (rolls) for the current turn?
   generatesRandomness() {
+    if (this.isSpectator) return false;
     return this.mode !== 'online' || this.turn === this.myPlayer;
   }
 
   // is it my controllable turn (regardless of whether a die was rolled)?
   myTurnNow() {
-    if (this.gameOver) return false;
+    if (this.gameOver || this.isSpectator) return false;
     if (this.mode === 'ai' || this.mode === 'online') return this.turn === this.myPlayer;
     return true;
   }
@@ -592,33 +675,24 @@ class App {
         this.lastPlaced = null;
         this.renderBoards();
         setTimeout(() => this.afterKillReroll(), 150);
-      }, 900);
+      }, 820);
     } else {
       this.lastPlaced = { player: placer, col };
       this.finishPlacement();
     }
   }
 
-  // my die flies across and head-butts the opponent's matching dice out of the column
+  // my die flies over, collides with the opponent's matching dice, and they fall together
   animateHeadbutt(placer, opp, col, v) {
     const myId = this.isBottom(placer) ? 'board-bottom' : 'board-top';
     const oppId = this.isBottom(opp) ? 'board-bottom' : 'board-top';
     const myColEl = document.querySelector('#' + myId + ' .board-col[data-col="' + col + '"]');
     const oppColEl = document.querySelector('#' + oppId + ' .board-col[data-col="' + col + '"]');
-    const up = this.isBottom(opp) ? 1 : -1;  // knock direction (toward the near edge)
 
     const impact = () => {
-      if (oppColEl) {
-        oppColEl.querySelectorAll('.die-face[data-pips="' + v + '"]').forEach(d => {
-          if (!d.classList.contains('immune')) {
-            d.style.setProperty('--kx', (Math.random() * 40 - 20) + 'px');
-            d.style.setProperty('--ky', (up * (70 + Math.random() * 40)) + 'px');
-            d.style.setProperty('--kr', (Math.random() * 260 - 130) + 'deg');
-            d.classList.add('knockout');
-          }
-        });
-        oppColEl.classList.remove('hit'); void oppColEl.offsetWidth; oppColEl.classList.add('hit');
-      }
+      if (oppColEl) oppColEl.querySelectorAll('.die-face[data-pips="' + v + '"]').forEach(d => {
+        if (!d.classList.contains('immune')) d.classList.add('drop');
+      });
     };
 
     const dice = myColEl ? myColEl.querySelectorAll('.slot .die-face') : [];
@@ -629,7 +703,7 @@ class App {
     if (!s.width || !t.width) { impact(); return; }
 
     const proj = src.cloneNode(true);
-    proj.classList.remove('pop', 'knockout');
+    proj.classList.remove('pop', 'drop');
     Object.assign(proj.style, {
       position: 'fixed', left: s.left + 'px', top: s.top + 'px',
       width: s.width + 'px', height: s.height + 'px', margin: '0', zIndex: '200', pointerEvents: 'none'
@@ -639,14 +713,12 @@ class App {
     const dx = (t.left + t.width / 2) - (s.left + s.width / 2);
     const dy = (t.top + t.height / 2) - (s.top + s.height / 2);
     proj.animate([
-      { transform: 'translate(0,0) scale(1)', opacity: 1, offset: 0 },
-      { transform: 'translate(' + (dx * -0.14) + 'px,' + (dy * -0.14) + 'px) scale(1.06)', offset: 0.22 },   // wind up
-      { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(1.25) rotate(12deg)', offset: 0.55 },          // SLAM
-      { transform: 'translate(' + (dx * 0.9) + 'px,' + (dy * 0.9) + 'px) scale(1.0)', opacity: 0.9, offset: 0.72 },
-      { transform: 'translate(' + (dx * 1.1) + 'px,' + (dy * 1.1) + 'px) scale(0.5)', opacity: 0, offset: 1 }
-    ], { duration: 640, easing: 'cubic-bezier(.7,0,.85,.5)' });
-    setTimeout(impact, 400);
-    setTimeout(() => proj.remove(), 660);
+      { transform: 'translate(0,0)', opacity: 1, offset: 0 },
+      { transform: 'translate(' + dx + 'px,' + dy + 'px)', opacity: 1, offset: 0.42 },              // fly in & collide
+      { transform: 'translate(' + (dx + 8) + 'px,' + (dy + 92) + 'px) rotate(20deg)', opacity: 0, offset: 1 }  // fall together
+    ], { duration: 700, easing: 'ease-in' });
+    setTimeout(impact, 300);
+    setTimeout(() => proj.remove(), 720);
   }
 
   afterKillReroll() {
@@ -769,7 +841,11 @@ class App {
   onOpponentLeft() {
     if (this.mode !== 'online') return;
     this.gameOver = true;
-    this.showGameOverBox('👋', '상대가 나갔어요', '상대방과의 연결이 끊어졌습니다.', false);
+    if (this.isSpectator) {
+      this.showGameOverBox('👋', '관전 종료', '플레이어가 나가서 게임이 끝났습니다.', false);
+    } else {
+      this.showGameOverBox('👋', '상대가 나갔어요', '상대방과의 연결이 끊어졌습니다.', false);
+    }
   }
 
   // ---------- render ----------
@@ -954,9 +1030,17 @@ class App {
       else if (winner === myP) { icon = '🏆'; title = '승리!'; }
       else { icon = '😢'; title = '패배'; }
       msg = '라인 ' + myL + ':' + oppL + ' · 총점 ' + myT + ':' + oppT;
-      if (this.mode === 'online' && winner !== null) this.reportOnlineResult(winner === myP);
+      if (this.mode === 'online' && winner !== null && !this.isSpectator) this.reportOnlineResult(winner === myP);
     }
-    this.showGameOverBox(icon, title, msg, true);
+    if (this.isSpectator) {
+      // neutral view for spectators
+      const { w0, w1 } = this.lineResult();
+      const wn = w0 > w1 ? 0 : w1 > w0 ? 1 : (t0 > t1 ? 0 : t1 > t0 ? 1 : null);
+      icon = wn === null ? '🤝' : '🏆';
+      title = wn === null ? '무승부' : this.names[wn] + ' 승리!';
+      msg = '라인 ' + w0 + ':' + w1 + ' · 총점 ' + t0 + ':' + t1;
+    }
+    this.showGameOverBox(icon, title, msg, !this.isSpectator);
   }
 
   reportOnlineResult(won) {
@@ -1001,12 +1085,24 @@ class App {
   startRematch() {
     this._rematchAccept = false;
     this.pendingRematch = false;
+    if (this.isSpectator) {
+      // reset the spectator view and keep following the new game
+      this.grids = [[[], [], []], [[], [], []]];
+      this.turn = 0; this.currentDie = 0; this.gameOver = false; this.placeAnywhere = false;
+      this.held = [false, false]; this.rerollUsed = [false, false]; this.immuneFirstUsed = false;
+      this.lastPlaced = null;
+      this.closeOverlay();
+      this.renderBoards(); this.renderDie(0, false); this.updateTurnUI();
+      return;
+    }
     this.startGame();
   }
 
   exitGame() {
     if (this.mode === 'online') this.net.disconnect();
     this.mode = null;
+    this.isSpectator = false;
+    this.myPlayer = 0;
     this.closeOverlay();
     this.showMenu();
   }
