@@ -59,19 +59,22 @@ function cloneGrids(grids) {
   return grids.map(g => g.map(col => col.map(d => ({ v: d.v, im: d.im, by: d.by }))));
 }
 
-// points sitting in exposed (non-immune) matching stacks — vulnerable to 알까기
-function exposureRisk(grid) {
+// exposed (non-immune) points that the OPPONENT can still 알까기
+// (only columns where the opponent has room to place a matching die)
+function exposureRisk(grids, p) {
+  const opp = 1 - p;
   let r = 0;
   for (let c = 0; c < 3; c++) {
+    if (grids[opp][c].length >= 3) continue;           // opponent can't reach this column
     const counts = {};
-    for (const d of grid[c]) if (!d.im) counts[d.v] = (counts[d.v] || 0) + 1;
-    for (const v in counts) { const k = counts[v]; if (k >= 2) r += Number(v) * (2 * k - 1); }
+    for (const d of grids[p][c]) if (!d.im) counts[d.v] = (counts[d.v] || 0) + 1;
+    for (const v in counts) { const k = counts[v]; r += Number(v) * (2 * k - 1) * (k >= 2 ? 1 : 0.25); }
   }
   return r;
 }
 
 // board evaluation from `me`'s view: line wins dominate, then points,
-// minus my exposed big stacks (알까기 bait), plus opponent's exposed stacks
+// minus my reachable exposed stacks, plus the opponent's
 function evalBoard(grids, me) {
   const opp = 1 - me;
   let lw = 0;
@@ -79,8 +82,75 @@ function evalBoard(grids, me) {
     const a = columnScore(grids[me][c]), b = columnScore(grids[opp][c]);
     if (a > b) lw++; else if (b > a) lw--;
   }
-  return lw * 40 + (playerScore(grids[me]) - playerScore(grids[opp]))
-       - exposureRisk(grids[me]) * 0.7 + exposureRisk(grids[opp]) * 0.4;
+  return lw * 45 + (playerScore(grids[me]) - playerScore(grids[opp]))
+       - exposureRisk(grids, me) * 0.85 + exposureRisk(grids, opp) * 0.5;
+}
+
+// ---- simulation + 2-ply lookahead for the hard AI ----
+const KILL_BONUS = 7;   // approx value of the free immune reroll after a 알까기
+
+// place a normal die of value X into `placer`'s column; resolve 알까기
+function simMove(grids, placer, col, X) {
+  const opp = 1 - placer;
+  const killed = grids[opp][col].some(d => !d.im && d.v === X);
+  const g = cloneGrids(grids);
+  if (killed) g[opp][col] = g[opp][col].filter(d => d.im || d.v !== X);  // both sides' X gone
+  else g[placer][col].push({ v: X, im: false, by: placer });
+  return { g, killed };
+}
+
+function simImmune(grids, owner, col, Y) {
+  const g = cloneGrids(grids);
+  g[owner][col].push({ v: Y, im: true, by: owner });
+  return g;
+}
+
+// best board (from me's view) when placing an immune die of value Y anywhere
+function bestImmune(grids, me, Y) {
+  const opp = 1 - me;
+  let best = grids, bestV = -Infinity;
+  for (const c of validColumns(grids[me])) { const g = simImmune(grids, me, c, Y); const v = evalBoard(g, me); if (v > bestV) { bestV = v; best = g; } }
+  for (const c of validColumns(grids[opp])) { const g = simImmune(grids, opp, c, Y); const v = evalBoard(g, me); if (v > bestV) { bestV = v; best = g; } }
+  return { g: best, v: bestV };
+}
+
+// opponent's best response to die e (greedy, kills approximated by a bonus)
+function oppBestBoard(grids, opp, e) {
+  let best = null, bestScore = -Infinity;
+  for (const oc of validColumns(grids[opp])) {
+    const { g, killed } = simMove(grids, opp, oc, e);
+    const score = evalBoard(g, opp) + (killed ? KILL_BONUS : 0);
+    if (score > bestScore) { bestScore = score; best = { g, killed }; }
+  }
+  return best;
+}
+
+// expected value (me's view) after the opponent's best reply, averaged over their roll
+function expectedOppReply(grids, me) {
+  const opp = 1 - me;
+  if (fieldFull(grids[opp])) return evalBoard(grids, me);
+  let s = 0;
+  for (let e = 1; e <= 6; e++) {
+    const ob = oppBestBoard(grids, opp, e);
+    if (!ob) { s += evalBoard(grids, me); continue; }
+    s += evalBoard(ob.g, me) - (ob.killed ? KILL_BONUS : 0);
+  }
+  return s / 6;
+}
+
+// value of playing X into `col` (2-ply): my move → my kill-reroll → opponent's reply
+function myMoveValue(grids, me, col, X) {
+  const { g, killed } = simMove(grids, me, col, X);
+  if (!killed) return expectedOppReply(g, me);
+  let s = 0;
+  for (let Y = 1; Y <= 6; Y++) s += expectedOppReply(bestImmune(g, me, Y).g, me);
+  return s / 6;
+}
+
+function bestMoveVal(grids, me, X) {
+  let best = -Infinity;
+  for (const c of validColumns(grids[me])) best = Math.max(best, myMoveValue(grids, me, c, X));
+  return best === -Infinity ? 0 : best;
 }
 
 // ==================== NETWORK ====================
@@ -833,12 +903,17 @@ class App {
   aiAct() {
     if (this.gameOver) return;
     const ai = this.aiPlayer, X = this.currentDie;
-    const anyKill = validColumns(this.grids[ai]).some(c => hasKill(this.grids[1 - ai], c, X));
-    // hard: reroll a weak die when there's nothing to 알까기
-    if (this.difficulty === 'hard' && !this.rerollUsed[ai] && !anyKill && X <= 2) {
-      this.rerollUsed[ai] = true;
-      this.rollDie(() => setTimeout(() => this.aiPlace1(), 400));
-      return;
+    if (this.difficulty === 'hard' && !this.rerollUsed[ai]) {
+      // reroll only when the current die's best play is clearly worse than an average roll
+      const cur = bestMoveVal(this.grids, ai, X);
+      let exp = 0;
+      for (let e = 1; e <= 6; e++) exp += bestMoveVal(this.grids, ai, e);
+      exp /= 6;
+      if (cur < exp - 4) {
+        this.rerollUsed[ai] = true;
+        this.rollDie(() => setTimeout(() => this.aiPlace1(), 400));
+        return;
+      }
     }
     this.aiPlace1();
   }
@@ -852,17 +927,14 @@ class App {
       this.applyPhase1(ai, cols[Math.floor(Math.random() * cols.length)], { v: X, im: false });
       return;
     }
-    // evaluate every column: 알까기 vs a plain placement, pick the best board
     let bestC = cols[0], bestV = -Infinity;
     for (const c of cols) {
-      const g = cloneGrids(this.grids);
       let val;
-      if (hasKill(this.grids[opp], c, X)) {
-        g[opp][c] = g[opp][c].filter(d => d.im || d.v !== X);   // both dice removed
-        val = evalBoard(g, ai) + 9;                              // + free immune reroll
+      if (this.difficulty === 'hard') {
+        val = myMoveValue(this.grids, ai, c, X);                 // 2-ply lookahead
       } else {
-        g[ai][c].push({ v: X, im: false, by: ai });
-        val = evalBoard(g, ai);
+        const { g, killed } = simMove(this.grids, ai, c, X);     // medium: greedy depth-1
+        val = evalBoard(g, ai) + (killed ? 9 : 0);
       }
       if (val > bestV) { bestV = val; bestC = c; }
     }
@@ -872,20 +944,17 @@ class App {
   aiPlaceY() {
     if (this.gameOver) return;
     const ai = this.aiPlayer, opp = 1 - ai, Y = this.currentDie;
-    let best = null, bestV = -Infinity;
-    for (const c of validColumns(this.grids[ai])) {
-      const g = cloneGrids(this.grids);
-      g[ai][c].push({ v: Y, im: true, by: ai });
-      const val = evalBoard(g, ai);
-      if (val > bestV) { bestV = val; best = { owner: ai, col: c }; }
+    const options = [];
+    for (const c of validColumns(this.grids[ai])) options.push({ owner: ai, col: c });
+    for (const c of validColumns(this.grids[opp])) options.push({ owner: opp, col: c });
+    if (!options.length) return;
+    let best = options[0], bestV = -Infinity;
+    for (const o of options) {
+      const g = simImmune(this.grids, o.owner, o.col, Y);
+      const val = this.difficulty === 'hard' ? expectedOppReply(g, ai) : evalBoard(g, ai);
+      if (val > bestV) { bestV = val; best = o; }
     }
-    for (const c of validColumns(this.grids[opp])) {   // 견제: block an opponent column
-      const g = cloneGrids(this.grids);
-      g[opp][c].push({ v: Y, im: true, by: ai });
-      const val = evalBoard(g, ai);
-      if (val > bestV) { bestV = val; best = { owner: opp, col: c }; }
-    }
-    if (best) this.applyPhase2(best.owner, best.col, Y);
+    this.applyPhase2(best.owner, best.col, Y);
   }
 
   // ---------- network actions ----------
