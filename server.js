@@ -186,9 +186,20 @@ app.post('/api/login', async (req, res) => {
     const user = await store.getUser(name.toLowerCase());
     if (!user) return res.json({ ok: false, reason: '존재하지 않는 닉네임입니다.' });
     if (user.password !== pw) return res.json({ ok: false, reason: '비밀번호가 틀렸습니다.' });
-    res.json({ ok: true, nickname: user.nickname, title: user.title || null });
+    res.json({ ok: true, nickname: user.nickname, title: user.title || null, aiStreak: user.ai_streak || 0 });
   } catch (err) {
     res.json({ ok: false, reason: '서버 오류가 발생했습니다.' });
+  }
+});
+
+app.get('/api/ai-streak', async (req, res) => {
+  const name = (req.query.nickname || '').trim();
+  if (!name) return res.json({ streak: 0, title: null });
+  try {
+    const u = await store.getUser(name.toLowerCase());
+    res.json({ streak: u ? (u.ai_streak || 0) : 0, title: u ? (u.title || null) : null });
+  } catch (err) {
+    res.json({ streak: 0, title: null });
   }
 });
 

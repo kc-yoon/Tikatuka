@@ -177,6 +177,7 @@ class App {
 
     this.nickname = localStorage.getItem('tikatuka_nickname') || '';
     this.title = localStorage.getItem('tikatuka_title') || null;
+    this.aiStreak = 0;
     this.bindNet();
     this.initUI();
   }
@@ -236,6 +237,7 @@ class App {
       if (!data.ok) { msg.textContent = data.reason || '로그인 실패'; msg.className = 'nickname-msg error'; return; }
       this.nickname = data.nickname;
       this.title = data.title || null;
+      this.aiStreak = data.aiStreak || 0;
       localStorage.setItem('tikatuka_nickname', data.nickname);
       localStorage.setItem('tikatuka_title', this.title || '');
       msg.textContent = '';
@@ -492,7 +494,26 @@ class App {
     this.showScreen('screen-game');
     this.sizeBoards();
     if (this.mode === 'online') this.loadH2H();
+    if (this.mode === 'ai' && this.difficulty === 'hard') this.loadAiStreak();
     this.startTurn();
+  }
+
+  // show current AI-어려움 win streak in the top panel
+  async loadAiStreak() {
+    if (!this.nickname) { this.showAiStreak(this.aiStreak); return; }
+    try {
+      const res = await fetch('/api/ai-streak?nickname=' + encodeURIComponent(this.nickname));
+      const d = await res.json();
+      this.aiStreak = d.streak || 0;
+    } catch {}
+    this.showAiStreak(this.aiStreak);
+  }
+
+  showAiStreak(n) {
+    const el = document.getElementById('h2h-record');
+    el.textContent = '🔥 ' + n + '연승 중';
+    el.style.display = '';
+    this.sizeBoards();
   }
 
   async loadH2H() {
@@ -1120,10 +1141,15 @@ class App {
         body: JSON.stringify({ nickname: this.nickname, difficulty: this.difficulty, won })
       });
       const d = await res.json();
+      if (d && typeof d.streak === 'number') this.aiStreak = d.streak;
+      const el = document.getElementById('gameover-message');
+      if (el) {
+        if (this.aiStreak >= 2) el.textContent += '   🔥 ' + this.aiStreak + '연승!';
+        else if (won === false) el.textContent += '   💔 연승 종료';
+      }
       if (d && d.title && d.title !== this.title) {
         this.title = d.title;
         localStorage.setItem('tikatuka_title', d.title);
-        const el = document.getElementById('gameover-message');
         if (el) el.textContent += '   🎉 칭호 획득: ' + d.title + '!';
       }
     } catch {}
