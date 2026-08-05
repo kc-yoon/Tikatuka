@@ -147,6 +147,22 @@
         </div>
       </div>
 
+      <!-- Reroll choice popup -->
+      <div class="reroll-choice" id="reroll-choice" style="display:none">
+        <div class="rc-title">리롤 · 하나 선택</div>
+        <div class="rc-dice">
+          <button class="rc-opt" onclick="app.chooseReroll('old')">
+            <div class="die-face rolled" id="rc-old" data-pips="0"></div><span>기존</span>
+          </button>
+          <button class="rc-opt" onclick="app.chooseReroll('new')">
+            <div class="die-face rolled" id="rc-new" data-pips="0"></div><span>새 주사위</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Roll FAB (bottom-right) -->
+      <button class="roll-fab" id="btn-roll-fab" onclick="app.doRoll()" style="display:none">🎲</button>
+
       <!-- Controls -->
       <div class="game-controls">
         <button class="btn btn-ghost btn-sm" onclick="app.exitGame()">나가기</button>
