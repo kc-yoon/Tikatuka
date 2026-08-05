@@ -18,6 +18,20 @@ function setDie(el, value, opp) {
   el.innerHTML = dieInner(value);
 }
 
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// render a title as a styled badge chip (titles are from a fixed safe set)
+function titleBadge(title) {
+  const cls = title === '카타고' ? 'tb-katago' : 'tb-alphago';
+  return '<span class="title-badge ' + cls + '">' + title + '</span>';
+}
+
+function nameWithTitle(name, title) {
+  return (title ? titleBadge(title) : '') + escapeHtml(name);
+}
+
 // ==================== GAME RULES ====================
 // A die is { v: 1..6, im: immune(무적, cannot be removed by 알까기) }.
 // Column score: for each group of n same-value dice → v × (2n − 1).
@@ -86,8 +100,9 @@ function evalBoard(grids, me) {
        - exposureRisk(grids, me) * 0.85 + exposureRisk(grids, opp) * 0.5;
 }
 
-// ---- simulation + 2-ply lookahead for the hard AI ----
-const KILL_BONUS = 7;   // approx value of the free immune reroll after a 알까기
+// ---- simulation + minimax lookahead for the hard AI ----
+const HARD_DEPTH = 3;   // plies of search after the AI's own move (3-ply)
+const KILL_BONUS = 7;   // approx value of a 알까기's free immune reroll (deep nodes)
 
 // place a normal die of value X into `placer`'s column; resolve 알까기
 function simMove(grids, placer, col, X) {
@@ -105,51 +120,59 @@ function simImmune(grids, owner, col, Y) {
   return g;
 }
 
-// best board (from me's view) when placing an immune die of value Y anywhere
-function bestImmune(grids, me, Y) {
-  const opp = 1 - me;
+// place an immune die of value Y to `owner`'s greatest benefit (own or opp field)
+function bestImmuneFor(grids, owner, Y) {
+  const opp = 1 - owner;
   let best = grids, bestV = -Infinity;
-  for (const c of validColumns(grids[me])) { const g = simImmune(grids, me, c, Y); const v = evalBoard(g, me); if (v > bestV) { bestV = v; best = g; } }
-  for (const c of validColumns(grids[opp])) { const g = simImmune(grids, opp, c, Y); const v = evalBoard(g, me); if (v > bestV) { bestV = v; best = g; } }
-  return { g: best, v: bestV };
+  for (const c of validColumns(grids[owner])) { const g = simImmune(grids, owner, c, Y); const v = evalBoard(g, owner); if (v > bestV) { bestV = v; best = g; } }
+  for (const c of validColumns(grids[opp])) { const g = simImmune(grids, opp, c, Y); const v = evalBoard(g, owner); if (v > bestV) { bestV = v; best = g; } }
+  return best;
 }
 
-// opponent's best response to die e (greedy, kills approximated by a bonus)
-function oppBestBoard(grids, opp, e) {
-  let best = null, bestScore = -Infinity;
-  for (const oc of validColumns(grids[opp])) {
-    const { g, killed } = simMove(grids, opp, oc, e);
-    const score = evalBoard(g, opp) + (killed ? KILL_BONUS : 0);
-    if (score > bestScore) { bestScore = score; best = { g, killed }; }
+// minimax over chance (dice) nodes; value always from `ai`'s perspective.
+// `mover` is about to roll and play; `depth` = remaining plies.
+function searchRoll(grids, mover, ai, depth) {
+  if (depth <= 0) return evalBoard(grids, ai);
+  if (fieldFull(grids[mover])) {
+    if (fieldFull(grids[1 - mover])) return evalBoard(grids, ai);
+    return searchRoll(grids, 1 - mover, ai, depth);   // this player is done; other keeps going
+  }
+  let s = 0;
+  for (let X = 1; X <= 6; X++) s += searchBestMove(grids, mover, ai, X, depth);
+  return s / 6;
+}
+
+function searchBestMove(grids, mover, ai, X, depth) {
+  const cols = validColumns(grids[mover]);
+  if (!cols.length) return searchRoll(grids, 1 - mover, ai, depth - 1);
+  const maximizing = mover === ai;
+  let best = maximizing ? -Infinity : Infinity;
+  for (const c of cols) {
+    const v = searchAfterMove(grids, mover, ai, c, X, depth);
+    best = maximizing ? Math.max(best, v) : Math.min(best, v);
   }
   return best;
 }
 
-// expected value (me's view) after the opponent's best reply, averaged over their roll
-function expectedOppReply(grids, me) {
-  const opp = 1 - me;
-  if (fieldFull(grids[opp])) return evalBoard(grids, me);
-  let s = 0;
-  for (let e = 1; e <= 6; e++) {
-    const ob = oppBestBoard(grids, opp, e);
-    if (!ob) { s += evalBoard(grids, me); continue; }
-    s += evalBoard(ob.g, me) - (ob.killed ? KILL_BONUS : 0);
+function searchAfterMove(grids, mover, ai, col, X, depth) {
+  const { g, killed } = simMove(grids, mover, col, X);
+  if (killed) {
+    if (depth >= HARD_DEPTH) {
+      // root reroll: average over all reroll values placed optimally (accurate)
+      let s = 0;
+      for (let Y = 1; Y <= 6; Y++) s += searchRoll(bestImmuneFor(g, mover, Y), 1 - mover, ai, depth - 1);
+      return s / 6;
+    }
+    // deeper: approximate the reroll with a flat bonus to keep the search fast
+    return searchRoll(g, 1 - mover, ai, depth - 1) + (mover === ai ? KILL_BONUS : -KILL_BONUS);
   }
-  return s / 6;
+  return searchRoll(g, 1 - mover, ai, depth - 1);
 }
 
-// value of playing X into `col` (2-ply): my move → my kill-reroll → opponent's reply
-function myMoveValue(grids, me, col, X) {
-  const { g, killed } = simMove(grids, me, col, X);
-  if (!killed) return expectedOppReply(g, me);
-  let s = 0;
-  for (let Y = 1; Y <= 6; Y++) s += expectedOppReply(bestImmune(g, me, Y).g, me);
-  return s / 6;
-}
-
+// best achievable value for `me` given a rolled X (root: me plays, then search)
 function bestMoveVal(grids, me, X) {
   let best = -Infinity;
-  for (const c of validColumns(grids[me])) best = Math.max(best, myMoveValue(grids, me, c, X));
+  for (const c of validColumns(grids[me])) best = Math.max(best, searchAfterMove(grids, me, me, c, X, HARD_DEPTH));
   return best === -Infinity ? 0 : best;
 }
 
@@ -344,8 +367,8 @@ class App {
   showMenuButtons() {
     document.getElementById('auth-section').style.display = 'none';
     document.getElementById('menu-buttons').style.display = '';
-    const badge = this.title ? '👑 ' + this.title + ' ' : '';
-    document.getElementById('welcome-msg').textContent = badge + this.nickname + '님 환영합니다!';
+    document.getElementById('welcome-msg').innerHTML =
+      (this.title ? titleBadge(this.title) : '') + escapeHtml(this.nickname) + '님 환영합니다!';
   }
 
   logout() {
@@ -378,7 +401,7 @@ class App {
       list.innerHTML = html;
       const nameCells = list.querySelectorAll('.lb-row:not(.lb-head) .lb-name');
       rows.forEach((r, i) => {
-        if (nameCells[i]) nameCells[i].textContent = (r.title ? '👑' + r.title + ' ' : '') + r.nickname;
+        if (nameCells[i]) nameCells[i].innerHTML = nameWithTitle(r.nickname, r.title);
       });
     } catch {
       list.innerHTML = '<p class="dim">불러오기 실패</p>';
@@ -931,9 +954,9 @@ class App {
     for (const c of cols) {
       let val;
       if (this.difficulty === 'hard') {
-        val = myMoveValue(this.grids, ai, c, X);                 // 2-ply lookahead
+        val = searchAfterMove(this.grids, ai, ai, c, X, HARD_DEPTH);   // 3-ply minimax
       } else {
-        const { g, killed } = simMove(this.grids, ai, c, X);     // medium: greedy depth-1
+        const { g, killed } = simMove(this.grids, ai, c, X);           // medium: greedy depth-1
         val = evalBoard(g, ai) + (killed ? 9 : 0);
       }
       if (val > bestV) { bestV = val; bestC = c; }
@@ -951,7 +974,9 @@ class App {
     let best = options[0], bestV = -Infinity;
     for (const o of options) {
       const g = simImmune(this.grids, o.owner, o.col, Y);
-      const val = this.difficulty === 'hard' ? expectedOppReply(g, ai) : evalBoard(g, ai);
+      const val = this.difficulty === 'hard'
+        ? searchRoll(g, opp, ai, HARD_DEPTH - 1)   // opponent to move next
+        : evalBoard(g, ai);
       if (val > bestV) { bestV = val; best = o; }
     }
     this.applyPhase2(best.owner, best.col, Y);
@@ -995,8 +1020,8 @@ class App {
   // ---------- render ----------
   setupBoardLabels() {
     const showMine = (this.mode === 'ai' || (this.mode === 'online' && !this.isSpectator));
-    const myBadge = (showMine && this.title) ? '👑' + this.title + ' ' : '';
-    document.getElementById('name-bottom').textContent = myBadge + this.names[this.bottomPlayer()];
+    document.getElementById('name-bottom').innerHTML =
+      nameWithTitle(this.names[this.bottomPlayer()], (showMine ? this.title : null));
     document.getElementById('name-top').textContent = this.names[this.topPlayer()];
   }
 
@@ -1211,15 +1236,12 @@ class App {
       });
       const d = await res.json();
       if (d && typeof d.streak === 'number') this.aiStreak = d.streak;
+      if (d && d.title) { this.title = d.title; localStorage.setItem('tikatuka_title', d.title); }
       const el = document.getElementById('gameover-message');
       if (el) {
         if (this.aiStreak >= 2) el.textContent += '   🔥 ' + this.aiStreak + '연승!';
         else if (won === false) el.textContent += '   💔 연승 종료';
-      }
-      if (d && d.title && d.title !== this.title) {
-        this.title = d.title;
-        localStorage.setItem('tikatuka_title', d.title);
-        if (el) el.textContent += '   🎉 칭호 획득: ' + d.title + '!';
+        if (d && d.newlyAwarded) el.textContent += '   🎉 칭호 획득: ' + d.title + '!';
       }
     } catch {}
   }

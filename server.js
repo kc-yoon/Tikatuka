@@ -90,26 +90,36 @@ const store = {
       memUsers.set(nameLower, { nickname, password, wins: 0, losses: 0, ai_streak: 0, title: null });
     }
   },
-  // AI-hard win streak; award 알파고 title at 10
+  // AI-hard win streak; award 알파고 at 10, 카타고 at 20 (titles never downgrade)
   async addAiResult(nameLower, won) {
+    const RANK = { '알파고': 1, '카타고': 2 };
+    const titleFor = (streak) => streak >= 20 ? '카타고' : streak >= 10 ? '알파고' : null;
     if (useDB) {
       if (won) {
         const r = await pool.query(
-          'UPDATE tikatuka_users SET ai_streak = ai_streak + 1 WHERE nickname_lower = $1 RETURNING ai_streak',
+          'UPDATE tikatuka_users SET ai_streak = ai_streak + 1 WHERE nickname_lower = $1 RETURNING ai_streak, title',
           [nameLower]);
-        const streak = r.rows[0] ? r.rows[0].ai_streak : 0;
-        if (streak >= 10) {
-          await pool.query("UPDATE tikatuka_users SET title = '알파고' WHERE nickname_lower = $1", [nameLower]);
-          return { streak, title: '알파고' };
+        if (!r.rows[0]) return { streak: 0, title: null };
+        const streak = r.rows[0].ai_streak;
+        const cur = r.rows[0].title;
+        const want = titleFor(streak);
+        if (want && (RANK[want] || 0) > (RANK[cur] || 0)) {
+          await pool.query('UPDATE tikatuka_users SET title = $2 WHERE nickname_lower = $1', [nameLower, want]);
+          return { streak, title: want, newlyAwarded: true };
         }
-        return { streak, title: null };
+        return { streak, title: cur || null };
       }
-      await pool.query('UPDATE tikatuka_users SET ai_streak = 0 WHERE nickname_lower = $1', [nameLower]);
-      return { streak: 0, title: null };
+      const r = await pool.query('UPDATE tikatuka_users SET ai_streak = 0 WHERE nickname_lower = $1 RETURNING title', [nameLower]);
+      return { streak: 0, title: (r.rows[0] && r.rows[0].title) || null };
     }
     const u = memUsers.get(nameLower);
     if (!u) return { streak: 0, title: null };
-    if (won) { u.ai_streak = (u.ai_streak || 0) + 1; if (u.ai_streak >= 10) u.title = '알파고'; return { streak: u.ai_streak, title: u.title || null }; }
+    if (won) {
+      u.ai_streak = (u.ai_streak || 0) + 1;
+      const want = titleFor(u.ai_streak);
+      if (want && (RANK[want] || 0) > (RANK[u.title] || 0)) { u.title = want; return { streak: u.ai_streak, title: want, newlyAwarded: true }; }
+      return { streak: u.ai_streak, title: u.title || null };
+    }
     u.ai_streak = 0; return { streak: 0, title: u.title || null };
   },
   // records an online (human vs human) result for `player` against `opponent`
@@ -211,7 +221,7 @@ app.post('/api/ai-result', async (req, res) => {
   if (!name || difficulty !== 'hard') return res.json({ ok: true, streak: 0, title: null });
   try {
     const r = await store.addAiResult(name.toLowerCase(), won);
-    res.json({ ok: true, streak: r.streak, title: r.title || null });
+    res.json({ ok: true, streak: r.streak, title: r.title || null, newlyAwarded: !!r.newlyAwarded });
   } catch (err) {
     res.json({ ok: false });
   }
