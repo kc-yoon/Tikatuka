@@ -99,7 +99,7 @@ html, body {
 .leaderboard { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.5rem; }
 .lb-row {
   display: grid;
-  grid-template-columns: 2rem 1fr 2.5rem 2.5rem;
+  grid-template-columns: 1.8rem 1fr 2.1rem 2.1rem 2.8rem;
   align-items: center;
   padding: 0.55rem 0.6rem;
   border-radius: 8px;
@@ -112,6 +112,7 @@ html, body {
 .lb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lb-w { text-align: center; color: var(--success); font-weight: 700; }
 .lb-l { text-align: center; color: var(--text-dim); }
+.lb-rate { text-align: center; color: var(--accent); font-weight: 700; }
 .btn-icon { margin-right: 0.3rem; }
 
 /* ===== BUTTONS ===== */
@@ -188,18 +189,42 @@ html, body {
   grid-template-rows: repeat(3, 1fr);
   width: 100%;
   aspect-ratio: 1;
-  padding: 14%;
-  gap: 6%;
-  background: linear-gradient(145deg, var(--mine), #c98a20);
-  border-radius: 22%;
-  box-shadow: 0 3px 8px rgba(0,0,0,0.3), inset 0 1px 2px rgba(255,255,255,0.3);
+  padding: 15%;
+  gap: 5%;
+  background:
+    radial-gradient(120% 120% at 28% 22%, rgba(255,255,255,0.55), rgba(255,255,255,0) 42%),
+    linear-gradient(150deg, var(--mine-light, #f4c868) 0%, var(--mine) 45%, #b3760f 100%);
+  border-radius: 26%;
+  box-shadow:
+    0 4px 10px rgba(0,0,0,0.38),
+    inset 0 2px 3px rgba(255,255,255,0.55),
+    inset 0 -3px 5px rgba(0,0,0,0.28);
 }
 .die-face span { display: block; border-radius: 50%; background: transparent; }
-.die-face span.on { background: var(--pip); box-shadow: inset 0 1px 1px rgba(0,0,0,0.4); }
-.die-face.opp { background: linear-gradient(145deg, var(--opp), #1f88c8); }
+.die-face span.on {
+  background: radial-gradient(circle at 35% 30%, #4a3a18, var(--pip) 70%);
+  box-shadow: inset 0 1.5px 2px rgba(0,0,0,0.55), 0 1px 0 rgba(255,255,255,0.15);
+}
+.die-face.opp {
+  background:
+    radial-gradient(120% 120% at 28% 22%, rgba(255,255,255,0.5), rgba(255,255,255,0) 42%),
+    linear-gradient(150deg, var(--opp-light, #68c8f4) 0%, var(--opp) 45%, #146a9e 100%);
+}
+.die-face.opp span.on { background: radial-gradient(circle at 35% 30%, #0b2436, #06121c 70%); }
 .die-face.empty { background: var(--slot); box-shadow: none; }
 .die-face.big { width: 56px; height: 56px; }
-.die-face.big.alt { background: linear-gradient(145deg, var(--opp), #1f88c8); }
+.die-face.big.alt {
+  background:
+    radial-gradient(120% 120% at 28% 22%, rgba(255,255,255,0.5), rgba(255,255,255,0) 42%),
+    linear-gradient(150deg, var(--opp-light, #68c8f4) 0%, var(--opp) 45%, #146a9e 100%);
+}
+/* press-and-hold spin: a fast jitter */
+.die-face.spinning { animation: dieSpin 0.14s steps(2) infinite; }
+@keyframes dieSpin {
+  0%   { transform: rotate(-7deg) scale(1.05); }
+  50%  { transform: rotate(6deg) scale(0.97); }
+  100% { transform: rotate(-4deg) scale(1.04); }
+}
 
 /* ===== GAME LAYOUT ===== */
 .game-layout {
@@ -229,7 +254,7 @@ html, body {
 .shield-count:empty { display: none; }
 .h2h { font-size: 0.72rem; color: var(--text-dim); font-weight: 600; }
 .player-name { font-weight: 700; font-size: 0.95rem; }
-.player-total { font-weight: 800; font-size: 1.3rem; color: var(--accent); font-variant-numeric: tabular-nums; }
+.player-total { display: none; }   /* total score removed — game is decided by lines */
 #panel-top .player-total { color: var(--opp); }
 
 /* ===== BOARD ===== */
@@ -419,6 +444,17 @@ html, body {
   transition: transform 0.3s ease; z-index: 50;
 }
 .chat-panel.open { transform: translateX(-50%) translateY(0); }
+
+/* On wide (PC) screens, dock chat to the right side next to the board */
+@media (min-width: 760px) {
+  .chat-panel {
+    left: auto; right: 16px; bottom: 16px; top: 16px;
+    transform: translateX(120%);
+    width: 300px; max-width: 300px; height: auto;
+    border-radius: 16px;
+  }
+  .chat-panel.open { transform: translateX(0); }
+}
 .chat-header { display: flex; justify-content: space-between; align-items: center; padding: 0.8rem 1rem; border-bottom: 1px solid var(--border); font-weight: 600; }
 .btn-close-sm { background: none; border: none; color: var(--text-dim); font-size: 1.4rem; cursor: pointer; }
 .chat-messages { flex: 1; overflow-y: auto; padding: 0.8rem 1rem; display: flex; flex-direction: column; gap: 0.5rem; }

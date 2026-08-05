@@ -141,6 +141,7 @@ class Net {
   }
 
   sendAction(data) { if (this.socket) this.socket.emit('gameAction', data); }
+  sendGameFinished() { if (this.socket) this.socket.emit('gameFinished'); }
   sendRematch() { if (this.socket) this.socket.emit('rematch'); }
   acceptRematch() { if (this.socket) this.socket.emit('rematchAccept'); }
   sendChat(text) { if (this.socket) this.socket.emit('chatMessage', text); }
@@ -175,6 +176,7 @@ class App {
     this.isSpectator = false;
 
     this.nickname = localStorage.getItem('tikatuka_nickname') || '';
+    this.title = localStorage.getItem('tikatuka_title') || null;
     this.bindNet();
     this.initUI();
   }
@@ -191,7 +193,12 @@ class App {
     document.getElementById('password-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.login();
     });
-    document.getElementById('die-stage').addEventListener('click', () => this.doRoll());
+    // press-and-hold to spin the die, release to settle
+    const dieStage = document.getElementById('die-stage');
+    dieStage.addEventListener('pointerdown', (e) => this.rollStart(e));
+    document.getElementById('btn-roll-fab').addEventListener('pointerdown', (e) => this.rollStart(e));
+    document.addEventListener('pointerup', () => this.rollRelease());
+    document.addEventListener('pointercancel', () => this.rollRelease());
     const onResize = () => this.sizeBoards();
     window.addEventListener('resize', onResize);
     if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
@@ -228,7 +235,9 @@ class App {
       const data = await res.json();
       if (!data.ok) { msg.textContent = data.reason || '로그인 실패'; msg.className = 'nickname-msg error'; return; }
       this.nickname = data.nickname;
+      this.title = data.title || null;
       localStorage.setItem('tikatuka_nickname', data.nickname);
+      localStorage.setItem('tikatuka_title', this.title || '');
       msg.textContent = '';
       this.showMenuButtons();
     } catch {
@@ -250,7 +259,9 @@ class App {
       const data = await res.json();
       if (!data.ok) { msg.textContent = data.reason || '회원가입 실패'; msg.className = 'nickname-msg error'; return; }
       this.nickname = data.nickname;
+      this.title = null;
       localStorage.setItem('tikatuka_nickname', data.nickname);
+      localStorage.setItem('tikatuka_title', '');
       msg.textContent = '';
       this.showMenuButtons();
     } catch {
@@ -261,12 +272,15 @@ class App {
   showMenuButtons() {
     document.getElementById('auth-section').style.display = 'none';
     document.getElementById('menu-buttons').style.display = '';
-    document.getElementById('welcome-msg').textContent = this.nickname + '님 환영합니다!';
+    const badge = this.title ? '👑 ' + this.title + ' ' : '';
+    document.getElementById('welcome-msg').textContent = badge + this.nickname + '님 환영합니다!';
   }
 
   logout() {
     this.nickname = '';
+    this.title = null;
     localStorage.removeItem('tikatuka_nickname');
+    localStorage.removeItem('tikatuka_title');
     document.getElementById('password-input').value = '';
     document.getElementById('auth-section').style.display = '';
     document.getElementById('menu-buttons').style.display = 'none';
@@ -280,16 +294,20 @@ class App {
       const res = await fetch('/api/leaderboard');
       const rows = await res.json();
       if (!rows.length) { list.innerHTML = '<p class="dim">아직 기록이 없습니다.</p>'; return; }
-      let html = '<div class="lb-row lb-head"><span class="lb-rank">#</span><span class="lb-name">닉네임</span><span class="lb-w">승</span><span class="lb-l">패</span></div>';
+      let html = '<div class="lb-row lb-head"><span class="lb-rank">#</span><span class="lb-name">닉네임</span><span class="lb-w">승</span><span class="lb-l">패</span><span class="lb-rate">승률</span></div>';
       rows.forEach((r, i) => {
         const me = r.nickname === this.nickname ? ' me' : '';
+        const total = r.wins + r.losses;
+        const rate = total > 0 ? Math.round(r.wins / total * 100) + '%' : '-';
         html += '<div class="lb-row' + me + '"><span class="lb-rank">' + (i + 1) + '</span>' +
                 '<span class="lb-name"></span><span class="lb-w">' + r.wins + '</span>' +
-                '<span class="lb-l">' + r.losses + '</span></div>';
+                '<span class="lb-l">' + r.losses + '</span><span class="lb-rate">' + rate + '</span></div>';
       });
       list.innerHTML = html;
       const nameCells = list.querySelectorAll('.lb-row:not(.lb-head) .lb-name');
-      rows.forEach((r, i) => { if (nameCells[i]) nameCells[i].textContent = r.nickname; });
+      rows.forEach((r, i) => {
+        if (nameCells[i]) nameCells[i].textContent = (r.title ? '👑' + r.title + ' ' : '') + r.nickname;
+      });
     } catch {
       list.innerHTML = '<p class="dim">불러오기 실패</p>';
     }
@@ -366,9 +384,15 @@ class App {
     if (code.length !== 4) { msg.textContent = '4자리 코드를 입력하세요.'; return; }
     try {
       await this.net.connect();
+      // mark spectator BEFORE joining so an early snapshot isn't dropped
+      this.isSpectator = true;
+      this.mode = 'online';
+      this.myPlayer = null;
       const d = await this.net.spectateRoom(code, this.nickname || '관전자');
       this.onSpectateJoined(d);
     } catch (err) {
+      this.isSpectator = false;
+      this.mode = null;
       msg.textContent = err || '관전 실패';
     }
   }
@@ -557,17 +581,47 @@ class App {
     label.textContent = who + '주사위를 굴리세요';
   }
 
-  doRoll() {
-    if (!this.awaitingRoll || this.rolling || this.gameOver) return;
+  // press-and-hold: start spinning the die
+  rollStart(e) {
+    if (e && e.cancelable) e.preventDefault();
+    if (!this.awaitingRoll || this.rolling || this.gameOver || !this.myTurnNow()) return;
     this.awaitingRoll = false;
+    this.spinning = true;
+    this.rolling = true;
+    document.getElementById('btn-hold').style.display = 'none';
     document.getElementById('die-stage').classList.remove('rollable');
-    document.getElementById('btn-roll-fab').style.display = 'none';
-    this.rollDie((v) => {
-      if (this.mode === 'online' && this.turn === this.myPlayer) {
-        this.net.sendAction({ type: 'roll', player: this.myPlayer, die: v });
+    const el = document.getElementById('current-die');
+    el.classList.add('spinning');
+    const opp = !this.isBottom(this.turn);
+    this._spinIv = setInterval(() => setDie(el, 1 + Math.floor(Math.random() * 6), opp), 55);
+  }
+
+  // release: decelerate smoothly and settle on the final value
+  rollRelease() {
+    if (!this.spinning) return;
+    this.spinning = false;
+    clearInterval(this._spinIv);
+    const el = document.getElementById('current-die');
+    el.classList.remove('spinning');
+    const opp = !this.isBottom(this.turn);
+    const v = 1 + Math.floor(Math.random() * 6);
+    const delays = [60, 90, 130, 190, 260];
+    let i = 0;
+    const step = () => {
+      if (i < delays.length) {
+        setDie(el, 1 + Math.floor(Math.random() * 6), opp);
+        setTimeout(step, delays[i++]);
+      } else {
+        this.currentDie = v;
+        setDie(el, v, opp);
+        this.rolling = false;
+        if (this.mode === 'online' && this.turn === this.myPlayer) {
+          this.net.sendAction({ type: 'roll', player: this.myPlayer, die: v });
+        }
+        this.enablePlacement();
       }
-      this.enablePlacement();
-    });
+    };
+    step();
   }
 
   doReroll() {
@@ -850,7 +904,9 @@ class App {
 
   // ---------- render ----------
   setupBoardLabels() {
-    document.getElementById('name-bottom').textContent = this.names[this.bottomPlayer()];
+    const showMine = (this.mode === 'ai' || (this.mode === 'online' && !this.isSpectator));
+    const myBadge = (showMine && this.title) ? '👑' + this.title + ' ' : '';
+    document.getElementById('name-bottom').textContent = myBadge + this.names[this.bottomPlayer()];
     document.getElementById('name-top').textContent = this.names[this.topPlayer()];
   }
 
@@ -1030,7 +1086,11 @@ class App {
       else if (winner === myP) { icon = '🏆'; title = '승리!'; }
       else { icon = '😢'; title = '패배'; }
       msg = '라인 ' + myL + ':' + oppL + ' · 총점 ' + myT + ':' + oppT;
-      if (this.mode === 'online' && winner !== null && !this.isSpectator) this.reportOnlineResult(winner === myP);
+      if (this.mode === 'online' && !this.isSpectator) {
+        if (winner !== null) this.reportOnlineResult(winner === myP);
+        this.net.sendGameFinished();   // mark finished so a later disconnect isn't scored
+      }
+      if (this.mode === 'ai' && this.difficulty === 'hard') this.reportAiResult(winner === myP);
     }
     if (this.isSpectator) {
       // neutral view for spectators
@@ -1050,6 +1110,23 @@ class App {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nickname: this.nickname, opponent, won })
     }).catch(() => {});
+  }
+
+  async reportAiResult(won) {
+    if (!this.nickname) return;
+    try {
+      const res = await fetch('/api/ai-result', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname: this.nickname, difficulty: this.difficulty, won })
+      });
+      const d = await res.json();
+      if (d && d.title && d.title !== this.title) {
+        this.title = d.title;
+        localStorage.setItem('tikatuka_title', d.title);
+        const el = document.getElementById('gameover-message');
+        if (el) el.textContent += '   🎉 칭호 획득: ' + d.title + '!';
+      }
+    } catch {}
   }
 
   showGameOverBox(icon, title, msg, allowRematch) {
