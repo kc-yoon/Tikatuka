@@ -246,11 +246,18 @@ html, body {
   transition: border-color 0.15s, background 0.15s;
 }
 .board-col { cursor: default; }
-.board.can-place .board-col.placeable { cursor: pointer; border-color: rgba(255,255,255,0.8); }
+.board.can-place .board-col.placeable { cursor: pointer; border-color: rgba(232,168,56,0.65); }
 .board.can-place .board-col.placeable:hover { border-color: var(--accent); background: rgba(232,168,56,0.10); }
-/* 알까기 opportunity: pulsing white outline on the column you can crack */
+/* 알까기 opportunity: pulsing white outline on the OPPONENT column you can crack */
 .board-col.kill-hint { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,0.6); animation: killHint 1s ease-in-out infinite; }
-@keyframes killHint { 0%,100% { box-shadow: 0 0 0 2px rgba(255,255,255,0.35); } 50% { box-shadow: 0 0 0 3px rgba(255,255,255,0.85); } }
+@keyframes killHint { 0%,100% { box-shadow: 0 0 0 2px rgba(255,255,255,0.35); } 50% { box-shadow: 0 0 0 3px rgba(255,255,255,0.9); } }
+/* 알까기 hit: opponent dice get knocked out of the column */
+.slot .die-face.knockout { animation: knockout 0.5s cubic-bezier(.4,-0.4,.9,.6) forwards; z-index: 6; }
+@keyframes knockout {
+  0%   { transform: translate(0,0) rotate(0) scale(1); opacity: 1; }
+  30%  { transform: translate(6px,-6px) rotate(20deg) scale(1.12); }
+  100% { transform: translate(46px,-64px) rotate(140deg) scale(0.25); opacity: 0; }
+}
 .col-score {
   text-align: center;
   font-size: 0.7rem;

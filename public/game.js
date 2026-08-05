@@ -424,6 +424,16 @@ class App {
     return this.mode !== 'online' || this.turn === this.myPlayer;
   }
 
+  // is it my controllable turn (regardless of whether a die was rolled)?
+  myTurnNow() {
+    if (this.gameOver) return false;
+    if (this.mode === 'ai' || this.mode === 'online') return this.turn === this.myPlayer;
+    return true;
+  }
+
+  // a player can no longer move once held or their field is full
+  isDone(p) { return this.held[p] || fieldFull(this.grids[p]); }
+
   // ---------- turn flow ----------
   startTurn() {
     if (this.gameOver) return;
@@ -434,16 +444,9 @@ class App {
     this.updateTurnUI();
     this.disablePlacement();
 
-    // Hold: skip held player's turns
-    if (this.held[this.turn]) {
-      if (this.held[1 - this.turn]) { this.endGame(); return; }
-      this.turn = 1 - this.turn;
-      setTimeout(() => this.startTurn(), 200);
-      return;
-    }
-    // Skip a player whose field is full (no move) — opponent keeps going until both full
-    if (fieldFull(this.grids[this.turn])) {
-      if (fieldFull(this.grids[1 - this.turn])) { this.endGame(); return; }
+    // Skip a player who can't move (held or full). Game ends when both are done.
+    if (this.isDone(this.turn)) {
+      if (this.isDone(1 - this.turn)) { this.endGame(); return; }
       this.turn = 1 - this.turn;
       setTimeout(() => this.startTurn(), 150);
       return;
@@ -464,6 +467,7 @@ class App {
     this.renderDie(0, !this.isBottom(this.turn));
     document.getElementById('die-stage').classList.add('rollable');
     document.getElementById('btn-roll-fab').style.display = '';
+    document.getElementById('btn-hold').style.display = '';   // hold usable before rolling
     const label = document.getElementById('turn-label');
     label.classList.add('my-turn');
     const who = this.mode === 'local' ? this.names[this.turn] + ' · ' : '';
@@ -508,15 +512,17 @@ class App {
   }
 
   doHold() {
-    if (this.gameOver || this.placeAnywhere) return;
-    if (!this.humanControlsActive()) return;
+    if (this.gameOver || this.placeAnywhere || this.rolling) return;
+    if (!this.myTurnNow()) return;                 // usable before OR after rolling
     const p = this.turn;
     this.held[p] = true;
     if (this.mode === 'online') this.net.sendAction({ type: 'hold', player: p });
     this.currentDie = 0;
+    this.awaitingRoll = false;
+    document.getElementById('die-stage').classList.remove('rollable');
     this.disablePlacement();
     this.renderDie(0, false);
-    if (this.held[1 - p]) { this.endGame(); return; }
+    if (this.isDone(0) && this.isDone(1)) { this.endGame(); return; }
     this.turn = 1 - p;
     setTimeout(() => this.startTurn(), 250);
   }
@@ -569,27 +575,38 @@ class App {
     this.grids[placer][col].push(die);
     if (placer === 0 && die.im) this.immuneFirstUsed = true;
 
-    let removed = 0;
-    if (!die.im) {
-      const opp = 1 - placer;
-      const before = this.grids[opp][col].length;
-      this.grids[opp][col] = this.grids[opp][col].filter(d => d.im || d.v !== die.v);
-      removed = before - this.grids[opp][col].length;
-    }
+    const opp = 1 - placer;
+    const willKill = !die.im && this.grids[opp][col].some(d => !d.im && d.v === die.v);
 
-    if (removed > 0) {
-      // 알까기: your die is also removed, then reroll an immune die placed anywhere
-      this.grids[placer][col].pop();
+    if (willKill) {
+      // show my die landing + opponent's matching dice, then knock them out
       this.currentDie = 0;
-      this.lastPlaced = null;
+      this.lastPlaced = { player: placer, col };
       this.disablePlacement();
       this.renderBoards();
-      this.flashKill(1 - placer, col);
-      setTimeout(() => this.afterKillReroll(), 480);
+      this.animateKnockout(opp, col, die.v);
+      setTimeout(() => {
+        // 알까기 resolves: my die is removed too, opponent's matching normals cleared
+        this.grids[placer][col].pop();
+        this.grids[opp][col] = this.grids[opp][col].filter(d => d.im || d.v !== die.v);
+        this.lastPlaced = null;
+        this.renderBoards();
+        setTimeout(() => this.afterKillReroll(), 120);
+      }, 500);
     } else {
       this.lastPlaced = { player: placer, col };
       this.finishPlacement();
     }
+  }
+
+  // animate the opponent's matching dice getting knocked out of a column
+  animateKnockout(owner, col, v) {
+    const id = this.isBottom(owner) ? 'board-bottom' : 'board-top';
+    const colEl = document.querySelector('#' + id + ' .board-col[data-col="' + col + '"]');
+    if (!colEl) return;
+    colEl.querySelectorAll('.die-face[data-pips="' + v + '"]').forEach(d => {
+      if (!d.classList.contains('immune')) d.classList.add('knockout');
+    });
   }
 
   afterKillReroll() {
@@ -617,8 +634,8 @@ class App {
     this.disablePlacement();
     this.renderBoards();
     this.renderDie(0, false);
-    // game ends only when BOTH fields are full (알까기 comebacks stay possible)
-    if (fieldFull(this.grids[0]) && fieldFull(this.grids[1])) { this.endGame(); return; }
+    // game ends only when both players can no longer move
+    if (this.isDone(0) && this.isDone(1)) { this.endGame(); return; }
     this.turn = 1 - this.turn;
     setTimeout(() => this.startTurn(), 350);
   }
@@ -779,12 +796,6 @@ class App {
     return row === col.length - 1;
   }
 
-  flashKill(owner, col) {
-    const id = this.isBottom(owner) ? 'board-bottom' : 'board-top';
-    const cE = document.querySelector('#' + id + ' .board-col[data-col="' + col + '"]');
-    if (cE) { cE.classList.remove('killed'); void cE.offsetWidth; cE.classList.add('killed'); }
-  }
-
   updateTurnUI() {
     const bottomEl = document.getElementById('panel-bottom');
     const topEl = document.getElementById('panel-top');
@@ -836,10 +847,10 @@ class App {
       rerollBtn.style.display = this.rerollUsed[p] ? 'none' : '';
       holdBtn.style.display = '';
       this.makeClickable(p);
-      // hint columns where placing the rolled value would 알까기 the opponent
+      // hint the OPPONENT's column that my rolled value can 알까기 (their zone, white)
       const opp = 1 - p;
-      const id = this.isBottom(p) ? 'board-bottom' : 'board-top';
-      document.querySelectorAll('#' + id + ' .board-col').forEach((cE) => {
+      const oppId = this.isBottom(opp) ? 'board-bottom' : 'board-top';
+      document.querySelectorAll('#' + oppId + ' .board-col').forEach((cE) => {
         const c = Number(cE.dataset.col);
         if (this.grids[p][c].length < 3 && hasKill(this.grids[opp], c, this.currentDie)) {
           cE.classList.add('kill-hint');
