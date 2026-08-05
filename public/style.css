@@ -251,12 +251,26 @@ html, body {
 /* 알까기 opportunity: pulsing white outline on the OPPONENT column you can crack */
 .board-col.kill-hint { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,0.6); animation: killHint 1s ease-in-out infinite; }
 @keyframes killHint { 0%,100% { box-shadow: 0 0 0 2px rgba(255,255,255,0.35); } 50% { box-shadow: 0 0 0 3px rgba(255,255,255,0.9); } }
-/* 알까기 hit: opponent dice get knocked out of the column */
-.slot .die-face.knockout { animation: knockout 0.5s cubic-bezier(.4,-0.4,.9,.6) forwards; z-index: 6; }
+/* 알까기 hit: opponent dice get knocked out (scatter set per-die via JS vars) */
+.slot .die-face.knockout {
+  animation: knockout 0.55s cubic-bezier(.35,-0.4,.8,.5) forwards;
+  z-index: 6;
+  --kx: 20px; --ky: -80px; --kr: 160deg;
+}
 @keyframes knockout {
   0%   { transform: translate(0,0) rotate(0) scale(1); opacity: 1; }
-  30%  { transform: translate(6px,-6px) rotate(20deg) scale(1.12); }
-  100% { transform: translate(46px,-64px) rotate(140deg) scale(0.25); opacity: 0; }
+  12%  { transform: translate(0,0) scale(0.82); }                        /* squash on impact */
+  30%  { transform: translate(calc(var(--kx)*0.3), calc(var(--ky)*0.3)) rotate(calc(var(--kr)*0.3)) scale(1.15); }
+  100% { transform: translate(var(--kx), var(--ky)) rotate(var(--kr)) scale(0.2); opacity: 0; }
+}
+/* impact shake on the struck column */
+.board-col.hit { animation: colHit 0.4s ease; }
+@keyframes colHit {
+  0%,100% { transform: translate(0,0); }
+  15% { transform: translate(-4px,2px); }
+  35% { transform: translate(5px,-3px); }
+  55% { transform: translate(-4px,2px); }
+  75% { transform: translate(3px,-1px); }
 }
 .col-score {
   text-align: center;

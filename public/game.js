@@ -579,34 +579,74 @@ class App {
     const willKill = !die.im && this.grids[opp][col].some(d => !d.im && d.v === die.v);
 
     if (willKill) {
-      // show my die landing + opponent's matching dice, then knock them out
+      // show my die landing, then head-butt the opponent's matching dice out
       this.currentDie = 0;
       this.lastPlaced = { player: placer, col };
       this.disablePlacement();
       this.renderBoards();
-      this.animateKnockout(opp, col, die.v);
+      this.animateHeadbutt(placer, opp, col, die.v);
       setTimeout(() => {
         // 알까기 resolves: my die is removed too, opponent's matching normals cleared
         this.grids[placer][col].pop();
         this.grids[opp][col] = this.grids[opp][col].filter(d => d.im || d.v !== die.v);
         this.lastPlaced = null;
         this.renderBoards();
-        setTimeout(() => this.afterKillReroll(), 120);
-      }, 500);
+        setTimeout(() => this.afterKillReroll(), 150);
+      }, 900);
     } else {
       this.lastPlaced = { player: placer, col };
       this.finishPlacement();
     }
   }
 
-  // animate the opponent's matching dice getting knocked out of a column
-  animateKnockout(owner, col, v) {
-    const id = this.isBottom(owner) ? 'board-bottom' : 'board-top';
-    const colEl = document.querySelector('#' + id + ' .board-col[data-col="' + col + '"]');
-    if (!colEl) return;
-    colEl.querySelectorAll('.die-face[data-pips="' + v + '"]').forEach(d => {
-      if (!d.classList.contains('immune')) d.classList.add('knockout');
+  // my die flies across and head-butts the opponent's matching dice out of the column
+  animateHeadbutt(placer, opp, col, v) {
+    const myId = this.isBottom(placer) ? 'board-bottom' : 'board-top';
+    const oppId = this.isBottom(opp) ? 'board-bottom' : 'board-top';
+    const myColEl = document.querySelector('#' + myId + ' .board-col[data-col="' + col + '"]');
+    const oppColEl = document.querySelector('#' + oppId + ' .board-col[data-col="' + col + '"]');
+    const up = this.isBottom(opp) ? 1 : -1;  // knock direction (toward the near edge)
+
+    const impact = () => {
+      if (oppColEl) {
+        oppColEl.querySelectorAll('.die-face[data-pips="' + v + '"]').forEach(d => {
+          if (!d.classList.contains('immune')) {
+            d.style.setProperty('--kx', (Math.random() * 40 - 20) + 'px');
+            d.style.setProperty('--ky', (up * (70 + Math.random() * 40)) + 'px');
+            d.style.setProperty('--kr', (Math.random() * 260 - 130) + 'deg');
+            d.classList.add('knockout');
+          }
+        });
+        oppColEl.classList.remove('hit'); void oppColEl.offsetWidth; oppColEl.classList.add('hit');
+      }
+    };
+
+    const dice = myColEl ? myColEl.querySelectorAll('.slot .die-face') : [];
+    const src = dice.length ? dice[dice.length - 1] : null;
+    if (!src || !oppColEl) { impact(); return; }
+    const s = src.getBoundingClientRect();
+    const t = oppColEl.getBoundingClientRect();
+    if (!s.width || !t.width) { impact(); return; }
+
+    const proj = src.cloneNode(true);
+    proj.classList.remove('pop', 'knockout');
+    Object.assign(proj.style, {
+      position: 'fixed', left: s.left + 'px', top: s.top + 'px',
+      width: s.width + 'px', height: s.height + 'px', margin: '0', zIndex: '200', pointerEvents: 'none'
     });
+    document.body.appendChild(proj);
+    src.style.visibility = 'hidden';
+    const dx = (t.left + t.width / 2) - (s.left + s.width / 2);
+    const dy = (t.top + t.height / 2) - (s.top + s.height / 2);
+    proj.animate([
+      { transform: 'translate(0,0) scale(1)', opacity: 1, offset: 0 },
+      { transform: 'translate(' + (dx * -0.14) + 'px,' + (dy * -0.14) + 'px) scale(1.06)', offset: 0.22 },   // wind up
+      { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(1.25) rotate(12deg)', offset: 0.55 },          // SLAM
+      { transform: 'translate(' + (dx * 0.9) + 'px,' + (dy * 0.9) + 'px) scale(1.0)', opacity: 0.9, offset: 0.72 },
+      { transform: 'translate(' + (dx * 1.1) + 'px,' + (dy * 1.1) + 'px) scale(0.5)', opacity: 0, offset: 1 }
+    ], { duration: 640, easing: 'cubic-bezier(.7,0,.85,.5)' });
+    setTimeout(impact, 400);
+    setTimeout(() => proj.remove(), 660);
   }
 
   afterKillReroll() {
