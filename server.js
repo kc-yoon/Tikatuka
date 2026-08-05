@@ -46,11 +46,15 @@ async function initDB() {
       PRIMARY KEY (player_lower, opponent_lower)
     )
   `);
-  // one-time reset when TIKATUKA_RESET=1 is set on the environment
-  if (process.env.TIKATUKA_RESET === '1') {
+  // one-time reset of all users/records — runs exactly once, tracked by a marker row
+  await pool.query('CREATE TABLE IF NOT EXISTS tikatuka_meta (mkey VARCHAR PRIMARY KEY, mval VARCHAR)');
+  const resetKey = 'reset_20260805';
+  const done = await pool.query('SELECT 1 FROM tikatuka_meta WHERE mkey = $1', [resetKey]);
+  if (done.rows.length === 0) {
     await pool.query('DELETE FROM tikatuka_users');
     await pool.query('DELETE FROM tikatuka_h2h');
-    console.log('⚠️ 티카투카 사용자/전적 초기화 완료 (TIKATUKA_RESET)');
+    await pool.query('INSERT INTO tikatuka_meta (mkey, mval) VALUES ($1, $2)', [resetKey, 'done']);
+    console.log('⚠️ 티카투카 사용자/전적 1회 초기화 완료');
   }
   console.log('DB 테이블 준비 완료');
 }
