@@ -434,15 +434,19 @@ class App {
       const rows = await res.json();
       if (!rows.length) { list.innerHTML = '<p class="dim">아직 기록이 없습니다.</p>'; return; }
       const medals = ['🥇', '🥈', '🥉'];
-      let html = '<div class="lb-row lb-head"><span class="lb-rank">#</span><span class="lb-name">닉네임</span><span class="lb-w">승</span><span class="lb-l">패</span><span class="lb-rate">승률</span></div>';
+      let html = '<div class="lb-row lb-head"><span class="lb-rank">#</span><span class="lb-name">닉네임</span><span class="lb-w">승</span><span class="lb-l">패</span><span class="lb-rate">승률</span><span class="lb-ai">AI연승</span></div>';
       rows.forEach((r, i) => {
         const me = r.nickname === this.nickname ? ' me' : '';
         const total = r.wins + r.losses;
         const rate = total > 0 ? Math.round(r.wins / total * 100) + '%' : '-';
         const rank = i < 3 ? '<span class="lb-rank-medal">' + medals[i] + '</span>' : (i + 1);
+        const streak = r.ai_streak || 0;
+        const maxStreak = r.ai_max_streak || 0;
+        const aiText = maxStreak > 0 ? (streak > 0 ? '🔥' + streak : '-') + '/' + maxStreak : '-';
         html += '<div class="lb-row' + me + '"><span class="lb-rank">' + rank + '</span>' +
                 '<span class="lb-name"></span><span class="lb-w">' + r.wins + '</span>' +
-                '<span class="lb-l">' + r.losses + '</span><span class="lb-rate">' + rate + '</span></div>';
+                '<span class="lb-l">' + r.losses + '</span><span class="lb-rate">' + rate + '</span>' +
+                '<span class="lb-ai">' + aiText + '</span></div>';
       });
       list.innerHTML = html;
       const nameCells = list.querySelectorAll('.lb-row:not(.lb-head) .lb-name');

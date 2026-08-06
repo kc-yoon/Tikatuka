@@ -141,7 +141,7 @@ html, body {
 .leaderboard { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.5rem; }
 .lb-row {
   display: grid;
-  grid-template-columns: 1.8rem 1fr 2.1rem 2.1rem 2.8rem;
+  grid-template-columns: 1.8rem 1fr 2.1rem 2.1rem 2.8rem 3.5rem;
   align-items: center;
   padding: 0.55rem 0.6rem;
   border-radius: 8px;
@@ -155,6 +155,7 @@ html, body {
 .lb-w { text-align: center; color: var(--success); font-weight: 700; }
 .lb-l { text-align: center; color: var(--text-dim); }
 .lb-rate { text-align: center; color: var(--accent); font-weight: 700; }
+.lb-ai { text-align: center; color: var(--text-dim); font-size: 0.82em; white-space: nowrap; }
 .btn-icon { margin-right: 0.3rem; }
 
 /* ===== BUTTONS ===== */

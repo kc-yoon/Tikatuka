@@ -36,7 +36,10 @@ async function initDB() {
     )
   `);
   await pool.query('ALTER TABLE tikatuka_users ADD COLUMN IF NOT EXISTS ai_streak INTEGER NOT NULL DEFAULT 0');
+  await pool.query('ALTER TABLE tikatuka_users ADD COLUMN IF NOT EXISTS ai_max_streak INTEGER NOT NULL DEFAULT 0');
   await pool.query('ALTER TABLE tikatuka_users ADD COLUMN IF NOT EXISTS title VARCHAR(20)');
+  // back-fill: set ai_max_streak = ai_streak where max is still 0 but streak is not
+  await pool.query('UPDATE tikatuka_users SET ai_max_streak = ai_streak WHERE ai_max_streak < ai_streak');
   await pool.query(`
     CREATE TABLE IF NOT EXISTS tikatuka_h2h (
       player_lower VARCHAR(12) NOT NULL,
@@ -81,7 +84,7 @@ const store = {
   async getUser(nameLower) {
     if (useDB) {
       const r = await pool.query(
-        'SELECT nickname, password, wins, losses, ai_streak, title FROM tikatuka_users WHERE nickname_lower = $1',
+        'SELECT nickname, password, wins, losses, ai_streak, ai_max_streak, title FROM tikatuka_users WHERE nickname_lower = $1',
         [nameLower]
       );
       return r.rows[0] || null;
@@ -95,7 +98,7 @@ const store = {
         [nickname, nameLower, password]
       );
     } else {
-      memUsers.set(nameLower, { nickname, password, wins: 0, losses: 0, ai_streak: 0, title: null });
+      memUsers.set(nameLower, { nickname, password, wins: 0, losses: 0, ai_streak: 0, ai_max_streak: 0, title: null });
     }
   },
   // AI-hard win streak; award titles at milestones (titles never downgrade)
@@ -105,30 +108,34 @@ const store = {
     if (useDB) {
       if (won) {
         const r = await pool.query(
-          'UPDATE tikatuka_users SET ai_streak = ai_streak + 1 WHERE nickname_lower = $1 RETURNING ai_streak, title',
+          `UPDATE tikatuka_users SET ai_streak = ai_streak + 1,
+           ai_max_streak = GREATEST(ai_max_streak, ai_streak + 1)
+           WHERE nickname_lower = $1 RETURNING ai_streak, ai_max_streak, title`,
           [nameLower]);
-        if (!r.rows[0]) return { streak: 0, title: null };
+        if (!r.rows[0]) return { streak: 0, maxStreak: 0, title: null };
         const streak = r.rows[0].ai_streak;
         const cur = r.rows[0].title;
         const want = titleFor(streak);
+        const maxS = r.rows[0].ai_max_streak;
         if (want && (RANK[want] || 0) > (RANK[cur] || 0)) {
           await pool.query('UPDATE tikatuka_users SET title = $2 WHERE nickname_lower = $1', [nameLower, want]);
-          return { streak, title: want, newlyAwarded: true };
+          return { streak, maxStreak: maxS, title: want, newlyAwarded: true };
         }
-        return { streak, title: cur || null };
+        return { streak, maxStreak: maxS, title: cur || null };
       }
-      const r = await pool.query('UPDATE tikatuka_users SET ai_streak = 0 WHERE nickname_lower = $1 RETURNING title', [nameLower]);
-      return { streak: 0, title: (r.rows[0] && r.rows[0].title) || null };
+      const r = await pool.query('UPDATE tikatuka_users SET ai_streak = 0 WHERE nickname_lower = $1 RETURNING ai_max_streak, title', [nameLower]);
+      return { streak: 0, maxStreak: (r.rows[0] && r.rows[0].ai_max_streak) || 0, title: (r.rows[0] && r.rows[0].title) || null };
     }
     const u = memUsers.get(nameLower);
-    if (!u) return { streak: 0, title: null };
+    if (!u) return { streak: 0, maxStreak: 0, title: null };
     if (won) {
       u.ai_streak = (u.ai_streak || 0) + 1;
+      u.ai_max_streak = Math.max(u.ai_max_streak || 0, u.ai_streak);
       const want = titleFor(u.ai_streak);
-      if (want && (RANK[want] || 0) > (RANK[u.title] || 0)) { u.title = want; return { streak: u.ai_streak, title: want, newlyAwarded: true }; }
-      return { streak: u.ai_streak, title: u.title || null };
+      if (want && (RANK[want] || 0) > (RANK[u.title] || 0)) { u.title = want; return { streak: u.ai_streak, maxStreak: u.ai_max_streak, title: want, newlyAwarded: true }; }
+      return { streak: u.ai_streak, maxStreak: u.ai_max_streak, title: u.title || null };
     }
-    u.ai_streak = 0; return { streak: 0, title: u.title || null };
+    u.ai_streak = 0; return { streak: 0, maxStreak: u.ai_max_streak || 0, title: u.title || null };
   },
   // records an online (human vs human) result for `player` against `opponent`
   async addOnlineResult(playerLower, opponentLower, won) {
@@ -164,12 +171,12 @@ const store = {
   async leaderboard() {
     if (useDB) {
       const r = await pool.query(
-        'SELECT nickname, wins, losses, title FROM tikatuka_users ORDER BY wins DESC, losses ASC LIMIT 20'
+        'SELECT nickname, wins, losses, title, ai_streak, ai_max_streak FROM tikatuka_users ORDER BY wins DESC, losses ASC LIMIT 20'
       );
       return r.rows;
     }
     return [...memUsers.values()]
-      .map(u => ({ nickname: u.nickname, wins: u.wins, losses: u.losses, title: u.title || null }))
+      .map(u => ({ nickname: u.nickname, wins: u.wins, losses: u.losses, title: u.title || null, ai_streak: u.ai_streak || 0, ai_max_streak: u.ai_max_streak || 0 }))
       .sort((a, b) => b.wins - a.wins || a.losses - b.losses)
       .slice(0, 20);
   }
