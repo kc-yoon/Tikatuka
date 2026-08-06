@@ -73,36 +73,60 @@ function cloneGrids(grids) {
   return grids.map(g => g.map(col => col.map(d => ({ v: d.v, im: d.im, by: d.by }))));
 }
 
-// exposed (non-immune) points that the OPPONENT can still 알까기
-// (only columns where the opponent has room to place a matching die)
+// how many points the opponent can destroy by 알까기-ing player `p`'s board
+// weight by V² so exposing high numbers (5,6) is disproportionately costly
 function exposureRisk(grids, p) {
   const opp = 1 - p;
   let r = 0;
   for (let c = 0; c < 3; c++) {
-    if (grids[opp][c].length >= 3) continue;           // opponent can't reach this column
+    if (grids[opp][c].length >= 3) continue;           // opponent can't place here
     const counts = {};
     for (const d of grids[p][c]) if (!d.im) counts[d.v] = (counts[d.v] || 0) + 1;
-    for (const v in counts) { const k = counts[v]; r += Number(v) * (2 * k - 1) * (k >= 2 ? 1 : 0.25); }
+    for (const v in counts) {
+      const k = counts[v]; const V = Number(v);
+      // a pair (k≥2) is a juicy 알까기 target; lone die is mildly exposed
+      r += V * V * (k >= 2 ? k * 1.2 : 0.15);
+    }
   }
   return r;
 }
 
-// board evaluation from `me`'s view: line wins dominate, then points,
-// minus my reachable exposed stacks, plus the opponent's
+// count immune dice (safe — can never be removed)
+function immuneCount(grid) {
+  let n = 0;
+  for (const col of grid) for (const d of col) if (d.im) n++;
+  return n;
+}
+
+// board evaluation from `me`'s view
+// winning 2 of 3 lines is the ONLY victory condition → line wins dominate everything
 function evalBoard(grids, me) {
   const opp = 1 - me;
-  let lw = 0;
+  let lineAdv = 0, lockedAdv = 0;
+  let myMargin = 0, oppMargin = 0;
   for (let c = 0; c < 3; c++) {
     const a = columnScore(grids[me][c]), b = columnScore(grids[opp][c]);
-    if (a > b) lw++; else if (b > a) lw--;
+    const locked = grids[me][c].length >= 3 && grids[opp][c].length >= 3;
+    if (a > b)      { lineAdv++;  myMargin  += a - b; if (locked) lockedAdv++; }
+    else if (b > a) { lineAdv--;  oppMargin += b - a; if (locked) lockedAdv--; }
   }
-  return lw * 45 + (playerScore(grids[me]) - playerScore(grids[opp]))
-       - exposureRisk(grids, me) * 0.85 + exposureRisk(grids, opp) * 0.5;
+  // decisive game-over detection: if already winning/losing 2 lines, strongly push
+  const lineVal = lineAdv * 80 + lockedAdv * 30
+                + (lineAdv >= 2 ? 120 : lineAdv <= -2 ? -120 : 0);
+  const pointVal = playerScore(grids[me]) - playerScore(grids[opp]);
+  // margin matters for tiebreaking: prefer large winning margins
+  const marginVal = (myMargin - oppMargin) * 0.3;
+  // exposure: my crackable stacks are bad, opponent's are opportunities
+  const myRisk = exposureRisk(grids, me);
+  const oppRisk = exposureRisk(grids, opp);
+  // immune dice are inherently valuable (safe points + block opponent slots)
+  const immuneVal = (immuneCount(grids[me]) - immuneCount(grids[opp])) * 5;
+  return lineVal + pointVal + marginVal - myRisk * 1.2 + oppRisk * 0.6 + immuneVal;
 }
 
 // ---- simulation + minimax lookahead for the hard AI ----
-const HARD_DEPTH = 3;   // plies of search after the AI's own move (3-ply)
-const KILL_BONUS = 7;   // approx value of a 알까기's free immune reroll (deep nodes)
+const HARD_DEPTH = 4;   // plies of search (4-ply expectiminimax)
+const KILL_BONUS = 12;  // approx value of a 알까기's free immune reroll (deep nodes)
 
 // place a normal die of value X into `placer`'s column; resolve 알까기
 function simMove(grids, placer, col, X) {
@@ -925,20 +949,49 @@ class App {
 
   aiAct() {
     if (this.gameOver) return;
-    const ai = this.aiPlayer, X = this.currentDie;
-    if (this.difficulty === 'hard' && !this.rerollUsed[ai]) {
-      // reroll only when the current die's best play is clearly worse than an average roll
-      const cur = bestMoveVal(this.grids, ai, X);
-      let exp = 0;
-      for (let e = 1; e <= 6; e++) exp += bestMoveVal(this.grids, ai, e);
-      exp /= 6;
-      if (cur < exp - 4) {
-        this.rerollUsed[ai] = true;
-        this.rollDie(() => setTimeout(() => this.aiPlace1(), 400));
+    const ai = this.aiPlayer, opp = 1 - ai, X = this.currentDie;
+
+    if (this.difficulty === 'hard') {
+      // === Strategic hold: compare placing vs holding ===
+      // If holding (opponent plays alone) yields a better position, hold.
+      const bestPlaceV = bestMoveVal(this.grids, ai, X);
+      const holdV = searchRoll(this.grids, opp, ai, HARD_DEPTH - 1);
+      if (holdV > bestPlaceV + 2) {
+        this.aiDoHold();
         return;
+      }
+
+      // === Reroll: use HARD_DEPTH−1 for speed (still strong) ===
+      if (!this.rerollUsed[ai]) {
+        let exp = 0;
+        for (let e = 1; e <= 6; e++) {
+          let v = -Infinity;
+          for (const c of validColumns(this.grids[ai]))
+            v = Math.max(v, searchAfterMove(this.grids, ai, ai, c, e, HARD_DEPTH - 1));
+          exp += v === -Infinity ? 0 : v;
+        }
+        exp /= 6;
+        if (bestPlaceV < exp - 3) {        // threshold −3 (was −4): more willing to reroll
+          this.rerollUsed[ai] = true;
+          this.rollDie(() => setTimeout(() => this.aiPlace1(), 400));
+          return;
+        }
       }
     }
     this.aiPlace1();
+  }
+
+  // AI holds (skips remaining turns) — bypasses myTurnNow() guard
+  aiDoHold() {
+    const ai = this.aiPlayer;
+    this.held[ai] = true;
+    this.currentDie = 0;
+    this.awaitingRoll = false;
+    this.disablePlacement();
+    this.renderDie(0, false);
+    if (this.isDone(0) && this.isDone(1)) { this.endGame(); return; }
+    this.turn = 1 - ai;
+    setTimeout(() => this.startTurn(), 250);
   }
 
   aiPlace1() {
@@ -954,7 +1007,7 @@ class App {
     for (const c of cols) {
       let val;
       if (this.difficulty === 'hard') {
-        val = searchAfterMove(this.grids, ai, ai, c, X, HARD_DEPTH);   // 3-ply minimax
+        val = searchAfterMove(this.grids, ai, ai, c, X, HARD_DEPTH);   // 4-ply minimax
       } else {
         const { g, killed } = simMove(this.grids, ai, c, X);           // medium: greedy depth-1
         val = evalBoard(g, ai) + (killed ? 9 : 0);
