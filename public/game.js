@@ -125,8 +125,10 @@ function evalBoard(grids, me) {
 }
 
 // ---- simulation + minimax lookahead for the hard AI ----
-const HARD_DEPTH = 4;   // plies of search (4-ply expectiminimax)
+const HARD_DEPTH = 6;   // plies of search (6-ply expectiminimax)
 const KILL_BONUS = 12;  // approx value of a 알까기's free immune reroll (deep nodes)
+const SHALLOW  = 4;     // depth ≤ SHALLOW → reduced sampling for speed
+const DICE_SAMPLES = [1, 4, 6];  // representative low/mid/high for deep nodes
 
 // place a normal die of value X into `placer`'s column; resolve 알까기
 function simMove(grids, placer, col, X) {
@@ -155,20 +157,38 @@ function bestImmuneFor(grids, owner, Y) {
 
 // minimax over chance (dice) nodes; value always from `ai`'s perspective.
 // `mover` is about to roll and play; `depth` = remaining plies.
+// At shallow depths (≤ SHALLOW), sample 3 representative dice instead of all 6.
 function searchRoll(grids, mover, ai, depth) {
   if (depth <= 0) return evalBoard(grids, ai);
   if (fieldFull(grids[mover])) {
     if (fieldFull(grids[1 - mover])) return evalBoard(grids, ai);
     return searchRoll(grids, 1 - mover, ai, depth);   // this player is done; other keeps going
   }
+  if (depth <= SHALLOW) {
+    // deep nodes: sample 3 dice {1,4,6} for speed (~3× faster per ply)
+    let s = 0;
+    for (const X of DICE_SAMPLES) s += searchBestMove(grids, mover, ai, X, depth);
+    return s / DICE_SAMPLES.length;
+  }
   let s = 0;
   for (let X = 1; X <= 6; X++) s += searchBestMove(grids, mover, ai, X, depth);
   return s / 6;
 }
 
+// At shallow depths, narrow columns to top-2 by quick evaluation.
 function searchBestMove(grids, mover, ai, X, depth) {
-  const cols = validColumns(grids[mover]);
+  let cols = validColumns(grids[mover]);
   if (!cols.length) return searchRoll(grids, 1 - mover, ai, depth - 1);
+  // deep nodes with 3 valid columns: keep only top-2 by quick one-step eval
+  if (depth <= SHALLOW && cols.length > 2) {
+    const maximizing = mover === ai;
+    const ranked = cols.map(c => {
+      const { g, killed } = simMove(grids, mover, c, X);
+      return { c, v: evalBoard(g, ai) + (killed ? (maximizing ? KILL_BONUS : -KILL_BONUS) : 0) };
+    });
+    ranked.sort((a, b) => maximizing ? b.v - a.v : a.v - b.v);
+    cols = ranked.slice(0, 2).map(r => r.c);
+  }
   const maximizing = mover === ai;
   let best = maximizing ? -Infinity : Infinity;
   for (const c of cols) {
@@ -952,13 +972,17 @@ class App {
     const ai = this.aiPlayer, opp = 1 - ai, X = this.currentDie;
 
     if (this.difficulty === 'hard') {
-      // === Strategic hold: compare placing vs holding ===
-      // If holding (opponent plays alone) yields a better position, hold.
       const bestPlaceV = bestMoveVal(this.grids, ai, X);
-      const holdV = searchRoll(this.grids, opp, ai, HARD_DEPTH - 1);
-      if (holdV > bestPlaceV + 2) {
-        this.aiDoHold();
-        return;
+
+      // === Strategic hold: only in late game (≥7 dice placed) ===
+      // Hold when placing ANY die hurts position (creates 알까기 targets, etc.)
+      const aiDice = this.grids[ai].reduce((s, c) => s + c.length, 0);
+      if (aiDice >= 7) {
+        const holdV = searchRoll(this.grids, opp, ai, HARD_DEPTH - 1);
+        if (holdV > bestPlaceV + 5) {
+          this.aiDoHold();
+          return;
+        }
       }
 
       // === Reroll: use HARD_DEPTH−1 for speed (still strong) ===
