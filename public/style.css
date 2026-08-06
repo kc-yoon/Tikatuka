@@ -112,14 +112,14 @@ html, body {
   background: linear-gradient(135deg, #ffe08a, #e0a532);
   box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.55);
 }
-.tb-alphago::before { content: '👑'; }
+.tb-alphago::before { content: '🎁'; }
 .tb-katago {
   color: #fff;
   background: linear-gradient(135deg, #a06bff, #6a3df0 60%, #4a24c0);
   box-shadow: 0 0 9px rgba(150,100,255,0.6), inset 0 1px 0 rgba(255,255,255,0.35);
   animation: katagoGlow 1.8s ease-in-out infinite;
 }
-.tb-katago::before { content: '⚜'; }
+.tb-katago::before { content: '☕'; }
 @keyframes katagoGlow {
   0%,100% { box-shadow: 0 0 7px rgba(150,100,255,0.5), inset 0 1px 0 rgba(255,255,255,0.35); }
   50%     { box-shadow: 0 0 14px rgba(170,120,255,0.95), inset 0 1px 0 rgba(255,255,255,0.4); }

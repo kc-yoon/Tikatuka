@@ -56,6 +56,14 @@ async function initDB() {
     await pool.query('INSERT INTO tikatuka_meta (mkey, mval) VALUES ($1, $2)', [resetKey, 'done']);
     console.log('⚠️ 티카투카 사용자/전적 1회 초기화 완료');
   }
+  // reset AI streak + title only (keep accounts & online records)
+  const resetAi = 'reset_ai_20260806';
+  const doneAi = await pool.query('SELECT 1 FROM tikatuka_meta WHERE mkey = $1', [resetAi]);
+  if (doneAi.rows.length === 0) {
+    await pool.query('UPDATE tikatuka_users SET ai_streak = 0, title = NULL');
+    await pool.query('INSERT INTO tikatuka_meta (mkey, mval) VALUES ($1, $2)', [resetAi, 'done']);
+    console.log('⚠️ AI 연승/칭호 초기화 완료');
+  }
   console.log('DB 테이블 준비 완료');
 }
 
@@ -90,10 +98,10 @@ const store = {
       memUsers.set(nameLower, { nickname, password, wins: 0, losses: 0, ai_streak: 0, title: null });
     }
   },
-  // AI-hard win streak; award 알파고 at 10, 카타고 at 20 (titles never downgrade)
+  // AI-hard win streak; award titles at milestones (titles never downgrade)
   async addAiResult(nameLower, won) {
-    const RANK = { '알파고': 1, '카타고': 2 };
-    const titleFor = (streak) => streak >= 20 ? '카타고' : streak >= 10 ? '알파고' : null;
+    const RANK = { '20연승하면 선물': 1, '커피당첨': 2 };
+    const titleFor = (streak) => streak >= 20 ? '커피당첨' : streak >= 10 ? '20연승하면 선물' : null;
     if (useDB) {
       if (won) {
         const r = await pool.query(
@@ -213,7 +221,7 @@ app.get('/api/ai-streak', async (req, res) => {
   }
 });
 
-// AI-hard result → track win streak, award 알파고 title at 10 (does NOT affect ranking)
+// AI-hard result → track win streak, award title at milestones (does NOT affect ranking)
 app.post('/api/ai-result', async (req, res) => {
   const name = (req.body.nickname || '').trim();
   const difficulty = (req.body.difficulty || '').trim();

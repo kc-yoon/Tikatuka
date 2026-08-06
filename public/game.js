@@ -24,7 +24,7 @@ function escapeHtml(s) {
 
 // render a title as a styled badge chip (titles are from a fixed safe set)
 function titleBadge(title) {
-  const cls = title === '카타고' ? 'tb-katago' : 'tb-alphago';
+  const cls = title === '커피당첨' ? 'tb-katago' : 'tb-alphago';
   return '<span class="title-badge ' + cls + '">' + title + '</span>';
 }
 
