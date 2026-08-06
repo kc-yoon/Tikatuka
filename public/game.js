@@ -433,12 +433,14 @@ class App {
       const res = await fetch('/api/leaderboard');
       const rows = await res.json();
       if (!rows.length) { list.innerHTML = '<p class="dim">아직 기록이 없습니다.</p>'; return; }
+      const medals = ['🥇', '🥈', '🥉'];
       let html = '<div class="lb-row lb-head"><span class="lb-rank">#</span><span class="lb-name">닉네임</span><span class="lb-w">승</span><span class="lb-l">패</span><span class="lb-rate">승률</span></div>';
       rows.forEach((r, i) => {
         const me = r.nickname === this.nickname ? ' me' : '';
         const total = r.wins + r.losses;
         const rate = total > 0 ? Math.round(r.wins / total * 100) + '%' : '-';
-        html += '<div class="lb-row' + me + '"><span class="lb-rank">' + (i + 1) + '</span>' +
+        const rank = i < 3 ? '<span class="lb-rank-medal">' + medals[i] + '</span>' : (i + 1);
+        html += '<div class="lb-row' + me + '"><span class="lb-rank">' + rank + '</span>' +
                 '<span class="lb-name"></span><span class="lb-w">' + r.wins + '</span>' +
                 '<span class="lb-l">' + r.losses + '</span><span class="lb-rate">' + rate + '</span></div>';
       });
@@ -602,13 +604,6 @@ class App {
     this.startGame();
   }
 
-  startLocal() {
-    this.mode = 'local';
-    this.myPlayer = 0;
-    this.names = ['Player 1', 'Player 2'];
-    document.getElementById('btn-chat-toggle').style.display = 'none';
-    this.startGame();
-  }
 
   startGame() {
     this.grids = [[[], [], []], [[], [], []]];
@@ -637,6 +632,11 @@ class App {
 
   // show current AI-어려움 win streak in the top panel
   async loadAiStreak() {
+    // wait for any pending AI result POST to finish first (prevents race condition on mobile)
+    if (this._aiResultPending) {
+      await this._aiResultPending.catch(() => {});
+      this._aiResultPending = null;
+    }
     if (!this.nickname) { this.showAiStreak(this.aiStreak); return; }
     try {
       const res = await fetch('/api/ai-streak?nickname=' + encodeURIComponent(this.nickname));
@@ -720,8 +720,6 @@ class App {
     if (this.mode === 'ai') {
       if (this.turn === this.aiPlayer) this.rollDie(() => this.scheduleAIMove());
       else this.promptRoll();
-    } else if (this.mode === 'local') {
-      this.promptRoll();
     } else {
       if (this.turn === this.myPlayer) this.promptRoll();
     }
@@ -735,8 +733,7 @@ class App {
     document.getElementById('btn-hold').style.display = '';   // hold usable before rolling
     const label = document.getElementById('turn-label');
     label.classList.add('my-turn');
-    const who = this.mode === 'local' ? this.names[this.turn] + ' · ' : '';
-    label.textContent = who + '주사위를 굴리세요';
+    label.textContent = '주사위를 굴리세요';
   }
 
   // press-and-hold: start spinning the die
@@ -1171,10 +1168,7 @@ class App {
 
     const label = document.getElementById('turn-label');
     label.classList.remove('my-turn');
-    if (this.mode === 'local') {
-      label.textContent = this.names[this.turn] + ' 차례';
-      label.classList.add('my-turn');
-    } else if (this.turn === this.myPlayer) {
+    if (this.turn === this.myPlayer) {
       label.textContent = '내 차례 · 열을 선택하세요';
       label.classList.add('my-turn');
     } else {
@@ -1266,11 +1260,7 @@ class App {
 
     const { w0, w1, t0, t1, winner } = this.lineResult();
     let icon, title, msg;
-    if (this.mode === 'local') {
-      if (winner === null) { icon = '🤝'; title = '무승부'; }
-      else { icon = '🏆'; title = this.names[winner] + ' 승리!'; }
-      msg = '라인 ' + w0 + ':' + w1 + ' · 총점 ' + t0 + ':' + t1;
-    } else {
+    {
       const myP = this.myPlayer;
       const myL = myP === 0 ? w0 : w1, oppL = myP === 0 ? w1 : w0;
       const myT = myP === 0 ? t0 : t1, oppT = myP === 0 ? t1 : t0;
@@ -1282,7 +1272,9 @@ class App {
         if (winner !== null) this.reportOnlineResult(winner === myP);
         this.net.sendGameFinished();   // mark finished so a later disconnect isn't scored
       }
-      if (this.mode === 'ai' && this.difficulty === 'hard') this.reportAiResult(winner === myP);
+      if (this.mode === 'ai' && this.difficulty === 'hard') {
+        this._aiResultPending = this.reportAiResult(winner === myP);
+      }
     }
     if (this.isSpectator) {
       // neutral view for spectators
@@ -1320,7 +1312,7 @@ class App {
         else if (won === false) el.textContent += '   💔 연승 종료';
         if (d && d.newlyAwarded) el.textContent += '   🎉 칭호 획득: ' + d.title + '!';
       }
-    } catch {}
+    } catch (err) { console.warn('reportAiResult failed:', err); }
   }
 
   showGameOverBox(icon, title, msg, allowRematch) {
