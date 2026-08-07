@@ -40,16 +40,69 @@ class SoundManager {
     src.connect(f); f.connect(g); g.connect(this.ctx.destination);
     src.start(t); src.stop(t + dur + 0.02);
   }
-  // dice rattling when press-hold starts
-  _diceShake() {
-    for (let i = 0; i < 4; i++) this._osc('square', 700 + Math.random() * 500, 0.03, 0.07, i * 0.035);
-    this._noise(0.12, 0.05);
+  // filtered noise burst — simulates a hard object hitting a wooden surface
+  _knock(dur, vol, freq, delay) {
+    const t = this.ctx.currentTime + (delay || 0);
+    const len = Math.ceil(this.ctx.sampleRate * dur);
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.frequency.value = freq; bp.Q.value = 1.5;
+    src.connect(bp); bp.connect(g); g.connect(this.ctx.destination);
+    src.start(t); src.stop(t + dur + 0.02);
   }
-  // satisfying clack when die settles
+  // wood‑thud helper — lowpass‑filtered noise burst (deeper than _knock)
+  _thud(dur, vol, freq, delay) {
+    const t = this.ctx.currentTime + (delay || 0);
+    const len = Math.ceil(this.ctx.sampleRate * dur);
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = freq; lp.Q.value = 0.7;
+    src.connect(lp); lp.connect(g); g.connect(this.ctx.destination);
+    src.start(t); src.stop(t + dur + 0.02);
+  }
+  // realistic dice roll — NO oscillators, purely noise‑based
+  _diceRoll() {
+    // 1) initial drop: heavy thud on table surface
+    this._thud(0.06, 0.30, 400, 0);
+    this._knock(0.03, 0.12, 600, 0.005);
+    // 2) tumbling rattle: die rolling/scraping across surface (8 rapid micro‑taps)
+    for (let i = 0; i < 8; i++) {
+      const t = 0.05 + i * 0.022 + Math.random() * 0.008;
+      const vol = 0.04 + Math.random() * 0.05;
+      this._knock(0.012 + Math.random() * 0.008, vol, 500 + Math.random() * 400, t);
+    }
+    // 3) bounces: die hops on hard surface, each softer/shorter
+    const bounces = [
+      { t: 0.24, vol: 0.22, freq: 350, dur: 0.04 },
+      { t: 0.30, vol: 0.16, freq: 380, dur: 0.035 },
+      { t: 0.35, vol: 0.10, freq: 420, dur: 0.025 },
+      { t: 0.38, vol: 0.06, freq: 450, dur: 0.018 },
+      { t: 0.40, vol: 0.03, freq: 480, dur: 0.012 },
+    ];
+    for (const b of bounces) {
+      this._thud(b.dur, b.vol, b.freq, b.t);
+      this._knock(b.dur * 0.6, b.vol * 0.3, b.freq + 200, b.t + 0.003);
+    }
+    // 4) final settle: die tips flat with a soft clack
+    this._thud(0.04, 0.08, 300, 0.43);
+    this._knock(0.015, 0.05, 500, 0.435);
+  }
+  // satisfying clack when die settles — noise only, no tones
   _diceSettle() {
-    this._osc('sine', 420, 0.1, 0.18);
-    this._osc('triangle', 630, 0.07, 0.12, 0.015);
-    this._noise(0.05, 0.08);
+    this._thud(0.05, 0.20, 350, 0);
+    this._knock(0.025, 0.12, 550, 0.008);
   }
   // solid thud on normal placement
   _place() {
@@ -223,7 +276,15 @@ function hasKill(grid, col, v) {
 }
 
 function cloneGrids(grids) {
-  return grids.map(g => g.map(col => col.map(d => ({ v: d.v, im: d.im, by: d.by }))));
+  const r = [new Array(3), new Array(3)];
+  for (let p = 0; p < 2; p++) {
+    for (let c = 0; c < 3; c++) {
+      const src = grids[p][c], len = src.length, dst = new Array(len);
+      for (let i = 0; i < len; i++) { const d = src[i]; dst[i] = { v: d.v, im: d.im, by: d.by }; }
+      r[p][c] = dst;
+    }
+  }
+  return r;
 }
 
 // how many points the opponent can destroy by 알까기-ing player `p`'s board
@@ -280,16 +341,26 @@ function evalBoard(grids, me) {
 // ---- simulation + minimax lookahead for the hard AI ----
 const HARD_DEPTH = 6;   // plies of search (6-ply expectiminimax)
 const KILL_BONUS = 12;  // approx value of a 알까기's free immune reroll (deep nodes)
-const SHALLOW  = 4;     // depth ≤ SHALLOW → reduced sampling for speed
-const DICE_SAMPLES = [1, 4, 6];  // representative low/mid/high for deep nodes
+const SHALLOW  = 5;     // depth ≤ SHALLOW → reduced sampling for speed
+const DEEP     = 3;     // depth ≤ DEEP → ultra-reduced sampling (2 dice)
+const DICE_SAMPLES = [1, 4, 6];  // representative low/mid/high for mid-depth
+const DICE_DEEP    = [2, 5];     // representative lo/hi for deepest nodes
 
 // place a normal die of value X into `placer`'s column; resolve 알까기
 function simMove(grids, placer, col, X) {
   const opp = 1 - placer;
-  const killed = grids[opp][col].some(d => !d.im && d.v === X);
+  const oppCol = grids[opp][col];
+  let killed = false;
+  for (let i = 0; i < oppCol.length; i++) { if (!oppCol[i].im && oppCol[i].v === X) { killed = true; break; } }
   const g = cloneGrids(grids);
-  if (killed) g[opp][col] = g[opp][col].filter(d => d.im || d.v !== X);  // both sides' X gone
-  else g[placer][col].push({ v: X, im: false, by: placer });
+  if (killed) {
+    const filtered = [];
+    const src = g[opp][col];
+    for (let i = 0; i < src.length; i++) { if (src[i].im || src[i].v !== X) filtered.push(src[i]); }
+    g[opp][col] = filtered;
+  } else {
+    g[placer][col].push({ v: X, im: false, by: placer });
+  }
   return { g, killed };
 }
 
@@ -310,15 +381,21 @@ function bestImmuneFor(grids, owner, Y) {
 
 // minimax over chance (dice) nodes; value always from `ai`'s perspective.
 // `mover` is about to roll and play; `depth` = remaining plies.
-// At shallow depths (≤ SHALLOW), sample 3 representative dice instead of all 6.
+// Sampling strategy: root=all 6 dice, mid-depth=3, deep=2.
 function searchRoll(grids, mover, ai, depth) {
   if (depth <= 0) return evalBoard(grids, ai);
   if (fieldFull(grids[mover])) {
     if (fieldFull(grids[1 - mover])) return evalBoard(grids, ai);
     return searchRoll(grids, 1 - mover, ai, depth);   // this player is done; other keeps going
   }
+  if (depth <= DEEP) {
+    // deepest nodes: sample 2 dice {2,5} for maximum speed
+    let s = 0;
+    for (const X of DICE_DEEP) s += searchBestMove(grids, mover, ai, X, depth);
+    return s / DICE_DEEP.length;
+  }
   if (depth <= SHALLOW) {
-    // deep nodes: sample 3 dice {1,4,6} for speed (~3× faster per ply)
+    // mid-depth: sample 3 dice {1,4,6} for speed
     let s = 0;
     for (const X of DICE_SAMPLES) s += searchBestMove(grids, mover, ai, X, depth);
     return s / DICE_SAMPLES.length;
@@ -908,7 +985,7 @@ class App {
     document.getElementById('die-stage').classList.remove('rollable');
     const el = document.getElementById('current-die');
     el.classList.add('spinning');
-    sfx.play('diceShake');
+    sfx.play('diceRoll');
     const opp = !this.isBottom(this.turn);
     this._spinIv = setInterval(() => setDie(el, 1 + Math.floor(Math.random() * 6), opp), 55);
   }
@@ -968,9 +1045,31 @@ class App {
     this.enablePlacement();
   }
 
-  doHold() {
+  // generic confirm popup — returns a Promise<boolean>
+  _confirm(title, message) {
+    return new Promise(resolve => {
+      const ov = document.getElementById('overlay-confirm');
+      document.getElementById('confirm-title').textContent = title;
+      document.getElementById('confirm-message').textContent = message;
+      ov.classList.add('active');
+      const yes = document.getElementById('confirm-yes');
+      const no  = document.getElementById('confirm-no');
+      const cleanup = (result) => {
+        ov.classList.remove('active');
+        yes.replaceWith(yes.cloneNode(true));   // remove listeners
+        no.replaceWith(no.cloneNode(true));
+        resolve(result);
+      };
+      yes.addEventListener('click', () => cleanup(true),  { once: true });
+      no.addEventListener('click',  () => cleanup(false), { once: true });
+    });
+  }
+
+  async doHold() {
     if (this.gameOver || this.placeAnywhere || this.rolling) return;
-    if (!this.myTurnNow()) return;                 // usable before OR after rolling
+    if (!this.myTurnNow()) return;
+    const ok = await this._confirm('홀드', '정말 홀드하시겠습니까?\n내 턴을 건너뛰고 상대만 마저 굴립니다.');
+    if (!ok) return;
     sfx.play('click');
     const p = this.turn;
     this.held[p] = true;
@@ -993,11 +1092,11 @@ class App {
     el.classList.remove('rolling');
     void el.offsetWidth;
     el.classList.add('rolling');
-    sfx.play('diceShake');
+    sfx.play('diceRoll');
     let ticks = 0;
     const iv = setInterval(() => {
       setDie(el, 1 + Math.floor(Math.random() * 6), opp);
-      if (++ticks >= 9) {
+      if (++ticks >= 5) {
         clearInterval(iv);
         this.currentDie = v;
         this.renderDie(v, opp);
@@ -1006,7 +1105,7 @@ class App {
         this.rolling = false;
         if (cb) cb(v);
       }
-    }, 75);
+    }, 55);
   }
 
   renderDie(value, opp) { setDie(document.getElementById('current-die'), value, opp); }
@@ -1051,8 +1150,8 @@ class App {
         this.grids[opp][col] = this.grids[opp][col].filter(d => d.im || d.v !== die.v);
         this.lastPlaced = null;
         this.renderBoards();
-        setTimeout(() => this.afterKillReroll(), 150);
-      }, 820);
+        setTimeout(() => this.afterKillReroll(), 80);
+      }, 550);
     } else {
       sfx.play('place');
       this.lastPlaced = { player: placer, col };
@@ -1092,9 +1191,9 @@ class App {
     const dy = (t.top + t.height / 2) - (s.top + s.height / 2);
     proj.animate([
       { transform: 'translate(0,0) scale(1)', opacity: 1, offset: 0 },
-      { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(1.3)', opacity: 1, offset: 0.42 },
+      { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(1.3)', opacity: 1, offset: 0.45 },
       { transform: 'translate(' + (dx + 8) + 'px,' + (dy + 92) + 'px) rotate(25deg) scale(0.4)', opacity: 0, offset: 1 }
-    ], { duration: 700, easing: 'ease-in' });
+    ], { duration: 450, easing: 'ease-in' });
     setTimeout(() => {
       impact();
       if (oppColEl) { oppColEl.classList.remove('killed'); void oppColEl.offsetWidth; oppColEl.classList.add('killed'); }
@@ -1104,8 +1203,8 @@ class App {
       spawnImpactFlash(cx, cy);
       spawnParticles(cx, cy, 14, '#d94848', 7);
       spawnParticles(cx, cy, 10, '#e8a838', 5);
-    }, 300);
-    setTimeout(() => proj.remove(), 720);
+    }, 200);
+    setTimeout(() => proj.remove(), 470);
   }
 
   afterKillReroll() {
@@ -1114,7 +1213,7 @@ class App {
     this.rollDie((Y) => {
       this.placeAnywhere = true;
       if (this.mode === 'online') this.net.sendAction({ type: 'reroll2', player: this.turn, die: Y });
-      if (this.mode === 'ai' && this.turn === this.aiPlayer) setTimeout(() => this.aiPlaceY(), 500);
+      if (this.mode === 'ai' && this.turn === this.aiPlayer) setTimeout(() => this.aiPlaceY(), 250);
       else this.enablePlacement();
     });
   }
@@ -1137,21 +1236,29 @@ class App {
     // game ends only when both players can no longer move
     if (this.isDone(0) && this.isDone(1)) { this.endGame(); return; }
     this.turn = 1 - this.turn;
-    setTimeout(() => this.startTurn(), 350);
+    setTimeout(() => this.startTurn(), 200);
   }
 
   // ---------- AI ----------
-  scheduleAIMove() { setTimeout(() => this.aiAct(), 700); }
+  scheduleAIMove() { setTimeout(() => this.aiAct(), 350); }
 
   aiAct() {
     if (this.gameOver) return;
     const ai = this.aiPlayer, opp = 1 - ai, X = this.currentDie;
 
     if (this.difficulty === 'hard') {
-      const bestPlaceV = bestMoveVal(this.grids, ai, X);
+      // Evaluate all columns ONCE and reuse (avoid duplicate search in aiPlace1)
+      const cols = validColumns(this.grids[ai]);
+      if (cols.length === 0) return;
+      const colVals = {};
+      let bestPlaceV = -Infinity, bestC = cols[0];
+      for (const c of cols) {
+        const val = searchAfterMove(this.grids, ai, ai, c, X, HARD_DEPTH);
+        colVals[c] = val;
+        if (val > bestPlaceV) { bestPlaceV = val; bestC = c; }
+      }
 
       // === Strategic hold: only in late game (≥7 dice placed) ===
-      // Hold when placing ANY die hurts position (creates 알까기 targets, etc.)
       const aiDice = this.grids[ai].reduce((s, c) => s + c.length, 0);
       if (aiDice >= 7) {
         const holdV = searchRoll(this.grids, opp, ai, HARD_DEPTH - 1);
@@ -1161,22 +1268,26 @@ class App {
         }
       }
 
-      // === Reroll: use HARD_DEPTH−1 for speed (still strong) ===
+      // === Reroll: use HARD_DEPTH−2 for speed (still strong) ===
       if (!this.rerollUsed[ai]) {
         let exp = 0;
         for (let e = 1; e <= 6; e++) {
           let v = -Infinity;
-          for (const c of validColumns(this.grids[ai]))
-            v = Math.max(v, searchAfterMove(this.grids, ai, ai, c, e, HARD_DEPTH - 1));
+          for (const c of cols)
+            v = Math.max(v, searchAfterMove(this.grids, ai, ai, c, e, HARD_DEPTH - 2));
           exp += v === -Infinity ? 0 : v;
         }
         exp /= 6;
-        if (bestPlaceV < exp - 3) {        // threshold −3 (was −4): more willing to reroll
+        if (bestPlaceV < exp - 3) {
           this.rerollUsed[ai] = true;
-          this.rollDie(() => setTimeout(() => this.aiPlace1(), 400));
+          this.rollDie(() => setTimeout(() => this.aiPlace1(), 200));
           return;
         }
       }
+
+      // Place in best column (already computed)
+      this.applyPhase1(ai, bestC, { v: X, im: false });
+      return;
     }
     this.aiPlace1();
   }
@@ -1203,15 +1314,11 @@ class App {
       this.applyPhase1(ai, cols[Math.floor(Math.random() * cols.length)], { v: X, im: false });
       return;
     }
+    // medium: greedy depth-1 (hard uses aiAct() directly)
     let bestC = cols[0], bestV = -Infinity;
     for (const c of cols) {
-      let val;
-      if (this.difficulty === 'hard') {
-        val = searchAfterMove(this.grids, ai, ai, c, X, HARD_DEPTH);   // 4-ply minimax
-      } else {
-        const { g, killed } = simMove(this.grids, ai, c, X);           // medium: greedy depth-1
-        val = evalBoard(g, ai) + (killed ? 9 : 0);
-      }
+      const { g, killed } = simMove(this.grids, ai, c, X);
+      const val = evalBoard(g, ai) + (killed ? 9 : 0);
       if (val > bestV) { bestV = val; bestC = c; }
     }
     this.applyPhase1(ai, bestC, { v: X, im: false });
@@ -1506,7 +1613,7 @@ class App {
     document.getElementById('btn-rematch').style.display = allowRematch ? '' : 'none';
     document.getElementById('btn-rematch').disabled = false;
     document.getElementById('btn-rematch').textContent = '다시 하기';
-    setTimeout(() => document.getElementById('overlay-gameover').classList.add('active'), 700);
+    setTimeout(() => document.getElementById('overlay-gameover').classList.add('active'), 450);
   }
 
   // ---------- rematch ----------
@@ -1545,7 +1652,12 @@ class App {
     this.startGame();
   }
 
-  exitGame() {
+  async exitGame() {
+    // skip confirm if game is already over (gameover overlay visible)
+    if (!this.gameOver) {
+      const ok = await this._confirm('나가기', '정말 나가시겠습니까?\n진행 중인 게임이 종료됩니다.');
+      if (!ok) return;
+    }
     if (this.mode === 'online') this.net.disconnect();
     this.mode = null;
     this.isSpectator = false;

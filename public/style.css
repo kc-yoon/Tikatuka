@@ -547,6 +547,12 @@ html, body {
 .rules-body code { background: var(--surface); padding: 0.1rem 0.4rem; border-radius: 5px; font-weight: 700; color: var(--accent); }
 .rules-content > .btn { margin-top: 0.8rem; }
 
+.confirm-content { text-align: center; max-width: 320px; }
+.confirm-content h2 { margin-bottom: 0.5rem; }
+.confirm-content p { color: var(--text-dim); margin-bottom: 1.5rem; font-size: 0.95rem; }
+.confirm-buttons { display: flex; gap: 0.6rem; }
+.confirm-buttons .btn { flex: 1; }
+
 .gameover-content { text-align: center; }
 .gameover-icon { font-size: 3.5rem; margin-bottom: 0.5rem; }
 .gameover-content h2 { margin-bottom: 0.5rem; }
