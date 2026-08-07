@@ -1,3 +1,156 @@
+// ==================== SOUND MANAGER ====================
+class SoundManager {
+  constructor() {
+    this.ctx = null;
+    this.muted = localStorage.getItem('tikatuka_muted') === 'true';
+  }
+  init() {
+    if (this.ctx) return;
+    try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+  }
+  setMuted(m) { this.muted = m; localStorage.setItem('tikatuka_muted', m ? 'true' : 'false'); }
+  play(name) {
+    if (this.muted || !this.ctx) return;
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+    try { this['_' + name](); } catch (e) {}
+  }
+  _osc(type, freq, dur, vol, delay) {
+    const t = this.ctx.currentTime + (delay || 0);
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(g); g.connect(this.ctx.destination);
+    o.start(t); o.stop(t + dur + 0.02);
+  }
+  _noise(dur, vol, delay) {
+    const t = this.ctx.currentTime + (delay || 0);
+    const len = Math.ceil(this.ctx.sampleRate * dur);
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'highpass'; f.frequency.value = 500;
+    src.connect(f); f.connect(g); g.connect(this.ctx.destination);
+    src.start(t); src.stop(t + dur + 0.02);
+  }
+  // dice rattling when press-hold starts
+  _diceShake() {
+    for (let i = 0; i < 4; i++) this._osc('square', 700 + Math.random() * 500, 0.03, 0.07, i * 0.035);
+    this._noise(0.12, 0.05);
+  }
+  // satisfying clack when die settles
+  _diceSettle() {
+    this._osc('sine', 420, 0.1, 0.18);
+    this._osc('triangle', 630, 0.07, 0.12, 0.015);
+    this._noise(0.05, 0.08);
+  }
+  // solid thud on normal placement
+  _place() {
+    this._osc('sine', 160, 0.12, 0.2);
+    this._osc('sine', 90, 0.08, 0.12);
+    this._noise(0.04, 0.06);
+  }
+  // dramatic 알까기 impact
+  _kill() {
+    this._noise(0.25, 0.25);
+    this._osc('sawtooth', 110, 0.25, 0.22);
+    this._osc('sine', 65, 0.35, 0.2);
+    this._osc('square', 1100, 0.04, 0.18, 0.02);
+    this._osc('square', 750, 0.06, 0.12, 0.05);
+  }
+  // ascending sparkle for immune die
+  _immune() {
+    [523, 659, 784, 1047].forEach((freq, i) => {
+      this._osc('sine', freq, 0.14, 0.1, i * 0.07);
+      this._osc('triangle', freq * 2, 0.08, 0.04, i * 0.07);
+    });
+  }
+  // victory fanfare
+  _win() {
+    [523, 659, 784, 1047, 784, 1047].forEach((freq, i) => {
+      this._osc('sine', freq, 0.22, 0.13, i * 0.11);
+      this._osc('triangle', freq, 0.18, 0.06, i * 0.11 + 0.015);
+    });
+  }
+  // sad descending tones
+  _lose() {
+    [392, 349, 311, 261].forEach((freq, i) => this._osc('sine', freq, 0.28, 0.1, i * 0.18));
+  }
+  // subtle UI click
+  _click() { this._osc('sine', 800, 0.04, 0.08); }
+  // swoosh for reroll
+  _reroll() {
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = 'sine';
+    const t = this.ctx.currentTime;
+    o.frequency.setValueAtTime(200, t);
+    o.frequency.exponentialRampToValueAtTime(1200, t + 0.12);
+    g.gain.setValueAtTime(0.12, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    o.connect(g); g.connect(this.ctx.destination);
+    o.start(t); o.stop(t + 0.22);
+  }
+}
+const sfx = new SoundManager();
+
+// ==================== VFX HELPERS ====================
+function spawnParticles(x, y, count, color, sz) {
+  for (let i = 0; i < count; i++) {
+    const el = document.createElement('div');
+    el.className = 'vfx-particle';
+    const a = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.8;
+    const dist = 30 + Math.random() * 60;
+    Object.assign(el.style, {
+      left: x + 'px', top: y + 'px', width: sz + 'px', height: sz + 'px',
+      background: color, '--pdx': Math.cos(a) * dist + 'px', '--pdy': Math.sin(a) * dist + 'px'
+    });
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 700);
+  }
+}
+
+function screenShake() {
+  const el = document.querySelector('#screen-game .game-layout');
+  if (!el) return;
+  el.classList.remove('shake');
+  void el.offsetWidth;
+  el.classList.add('shake');
+  setTimeout(() => el.classList.remove('shake'), 500);
+  if (navigator.vibrate) navigator.vibrate([30, 20, 50]);
+}
+
+function spawnConfetti() {
+  const colors = ['#e8a838', '#38a8e8', '#48b868', '#d94848', '#b47cff', '#ffd54f'];
+  for (let i = 0; i < 50; i++) {
+    const el = document.createElement('div');
+    el.className = 'vfx-confetti';
+    el.style.left = Math.random() * 100 + 'vw';
+    el.style.background = colors[Math.floor(Math.random() * colors.length)];
+    el.style.animationDelay = (Math.random() * 0.8) + 's';
+    el.style.animationDuration = (1.2 + Math.random() * 1.5) + 's';
+    el.style.width = (4 + Math.random() * 8) + 'px';
+    el.style.height = (4 + Math.random() * 8) + 'px';
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 3500);
+  }
+}
+
+function spawnImpactFlash(x, y) {
+  const el = document.createElement('div');
+  el.className = 'vfx-impact-flash';
+  el.style.left = x + 'px'; el.style.top = y + 'px';
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 400);
+}
+
 // ==================== DICE HELPERS ====================
 
 const PIP_MAP = {
@@ -316,6 +469,8 @@ class App {
     this.title = localStorage.getItem('tikatuka_title') || null;
     this.aiStreak = 0;
     this.bindNet();
+    // initialize audio context on first user interaction
+    document.addEventListener('pointerdown', () => sfx.init(), { once: true });
     this.initUI();
   }
 
@@ -341,6 +496,8 @@ class App {
     window.addEventListener('resize', onResize);
     if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
     if (this.nickname) this.showMenuButtons();
+    const muteBtn = document.getElementById('btn-mute');
+    if (muteBtn) muteBtn.textContent = sfx.muted ? '🔇' : '🔊';
   }
 
   sizeBoards() {
@@ -751,6 +908,7 @@ class App {
     document.getElementById('die-stage').classList.remove('rollable');
     const el = document.getElementById('current-die');
     el.classList.add('spinning');
+    sfx.play('diceShake');
     const opp = !this.isBottom(this.turn);
     this._spinIv = setInterval(() => setDie(el, 1 + Math.floor(Math.random() * 6), opp), 55);
   }
@@ -773,6 +931,7 @@ class App {
       } else {
         this.currentDie = v;
         setDie(el, v, opp);
+        sfx.play('diceSettle');
         this.rolling = false;
         if (this.mode === 'online' && this.turn === this.myPlayer) {
           this.net.sendAction({ type: 'roll', player: this.myPlayer, die: v });
@@ -789,6 +948,7 @@ class App {
     const p = this.turn;
     if (this.rerollUsed[p]) return;
     this.rerollUsed[p] = true;
+    sfx.play('reroll');
     // roll a new die; player then chooses between the old and new value
     this._rerollOld = this.currentDie;
     this._rerollNew = 1 + Math.floor(Math.random() * 6);
@@ -800,6 +960,7 @@ class App {
   }
 
   chooseReroll(which) {
+    sfx.play('click');
     document.getElementById('reroll-choice').style.display = 'none';
     this.currentDie = which === 'new' ? this._rerollNew : this._rerollOld;
     this.renderDie(this.currentDie, !this.isBottom(this.turn));
@@ -810,6 +971,7 @@ class App {
   doHold() {
     if (this.gameOver || this.placeAnywhere || this.rolling) return;
     if (!this.myTurnNow()) return;                 // usable before OR after rolling
+    sfx.play('click');
     const p = this.turn;
     this.held[p] = true;
     if (this.mode === 'online') this.net.sendAction({ type: 'hold', player: p });
@@ -831,6 +993,7 @@ class App {
     el.classList.remove('rolling');
     void el.offsetWidth;
     el.classList.add('rolling');
+    sfx.play('diceShake');
     let ticks = 0;
     const iv = setInterval(() => {
       setDie(el, 1 + Math.floor(Math.random() * 6), opp);
@@ -839,6 +1002,7 @@ class App {
         this.currentDie = v;
         this.renderDie(v, opp);
         el.classList.remove('rolling');
+        sfx.play('diceSettle');
         this.rolling = false;
         if (cb) cb(v);
       }
@@ -890,6 +1054,7 @@ class App {
         setTimeout(() => this.afterKillReroll(), 150);
       }, 820);
     } else {
+      sfx.play('place');
       this.lastPlaced = { player: placer, col };
       this.finishPlacement();
     }
@@ -926,11 +1091,20 @@ class App {
     const dx = (t.left + t.width / 2) - (s.left + s.width / 2);
     const dy = (t.top + t.height / 2) - (s.top + s.height / 2);
     proj.animate([
-      { transform: 'translate(0,0)', opacity: 1, offset: 0 },
-      { transform: 'translate(' + dx + 'px,' + dy + 'px)', opacity: 1, offset: 0.42 },              // fly in & collide
-      { transform: 'translate(' + (dx + 8) + 'px,' + (dy + 92) + 'px) rotate(20deg)', opacity: 0, offset: 1 }  // fall together
+      { transform: 'translate(0,0) scale(1)', opacity: 1, offset: 0 },
+      { transform: 'translate(' + dx + 'px,' + dy + 'px) scale(1.3)', opacity: 1, offset: 0.42 },
+      { transform: 'translate(' + (dx + 8) + 'px,' + (dy + 92) + 'px) rotate(25deg) scale(0.4)', opacity: 0, offset: 1 }
     ], { duration: 700, easing: 'ease-in' });
-    setTimeout(impact, 300);
+    setTimeout(() => {
+      impact();
+      if (oppColEl) { oppColEl.classList.remove('killed'); void oppColEl.offsetWidth; oppColEl.classList.add('killed'); }
+      sfx.play('kill');
+      screenShake();
+      const cx = t.left + t.width / 2, cy = t.top + t.height / 2;
+      spawnImpactFlash(cx, cy);
+      spawnParticles(cx, cy, 14, '#d94848', 7);
+      spawnParticles(cx, cy, 10, '#e8a838', 5);
+    }, 300);
     setTimeout(() => proj.remove(), 720);
   }
 
@@ -948,6 +1122,7 @@ class App {
   // phase 2: place the immune reroll die into any column
   applyPhase2(owner, col, v) {
     if (this.gameOver) return;
+    sfx.play('immune');
     this.grids[owner][col].push({ v, im: true, by: this.turn });
     this.lastPlaced = { player: owner, col };
     this.finishPlacement();
@@ -1066,6 +1241,7 @@ class App {
     if (d.type === 'roll') {
       this.turn = d.player;
       this.currentDie = d.die;
+      sfx.play('diceSettle');
       this.updateTurnUI();
       this.renderDie(d.die, !this.isBottom(d.player));
     } else if (d.type === 'place1') {
@@ -1288,6 +1464,10 @@ class App {
       title = wn === null ? '무승부' : this.names[wn] + ' 승리!';
       msg = '라인 ' + w0 + ':' + w1 + ' · 총점 ' + t0 + ':' + t1;
     }
+    if (!this.isSpectator) {
+      if (winner === this.myPlayer) { sfx.play('win'); spawnConfetti(); }
+      else if (winner !== null) sfx.play('lose');
+    }
     this.showGameOverBox(icon, title, msg, !this.isSpectator);
   }
 
@@ -1372,6 +1552,12 @@ class App {
     this.myPlayer = 0;
     this.closeOverlay();
     this.showMenu();
+  }
+
+  toggleMute() {
+    sfx.init();
+    sfx.setMuted(!sfx.muted);
+    document.getElementById('btn-mute').textContent = sfx.muted ? '🔇' : '🔊';
   }
 
   // ---------- chat ----------

@@ -323,9 +323,10 @@ html, body {
 /* 알까기: struck dice collide and fall out of the column */
 .slot .die-face.drop { animation: dropOut 0.55s ease-in forwards; z-index: 6; }
 @keyframes dropOut {
-  0%  { transform: translateY(0) rotate(0); opacity: 1; }
-  15% { transform: translateY(-4px) scale(0.94); }        /* small recoil on impact */
-  100% { transform: translateY(98px) rotate(22deg); opacity: 0; }
+  0%  { transform: translateY(0) rotate(0) scale(1); opacity: 1; }
+  10% { transform: translateY(-14px) scale(1.12) rotate(-5deg); opacity: 1; }
+  30% { transform: translateY(-6px) scale(0.88); }
+  100%{ transform: translateY(110px) rotate(35deg) scale(0.5); opacity: 0; }
 }
 .col-score {
   text-align: center;
@@ -350,7 +351,7 @@ html, body {
   width: 100%;
   border: none;
 }
-.slot .die-face.pop { animation: pop 0.2s ease; }
+.slot .die-face.pop { animation: pop 0.35s ease; }
 .slot .die-face { position: relative; }
 /* immune (무적) die: bold bright ring + glow, cannot be removed by 알까기 */
 .slot .die-face.immune {
@@ -364,14 +365,20 @@ html, body {
 /* 알까기 hit flash on the targeted column */
 .board-col.killed { animation: killFlash 0.5s ease; }
 @keyframes killFlash {
-  0% { background: var(--danger); transform: scale(1.06); }
+  0%  { background: #fff; transform: scale(1.12); }
+  15% { background: var(--danger); transform: scale(1.06); }
   60% { background: rgba(217,72,72,0.4); }
-  100% { background: var(--bg-board); transform: scale(1); }
+  100%{ background: var(--bg-board); transform: scale(1); }
 }
 /* decided columns at game end */
 .board-col.col-won { border-color: var(--success); background: rgba(72,184,104,0.10); }
 .board-col.col-lost { border-color: var(--danger); background: rgba(217,72,72,0.08); }
-@keyframes pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes pop {
+  0%  { transform: scale(0.3) translateY(-15px); opacity: 0; }
+  50% { transform: scale(1.15) translateY(0); opacity: 1; }
+  70% { transform: scale(0.93); }
+  100%{ transform: scale(1); opacity: 1; }
+}
 .slot.clearing { animation: clearFlash 0.4s ease; }
 @keyframes clearFlash {
   0% { background: var(--danger); }
@@ -417,10 +424,11 @@ html, body {
 .die-face.rolling { animation: tumble 0.7s ease-in-out; }
 @keyframes tumble {
   0%   { transform: rotate(0deg) scale(1); }
-  20%  { transform: rotate(100deg) scale(1.14); }
-  40%  { transform: rotate(190deg) scale(0.94); }
-  60%  { transform: rotate(275deg) scale(1.12); }
-  80%  { transform: rotate(335deg) scale(0.98); }
+  15%  { transform: rotate(95deg) scale(1.22); }
+  30%  { transform: rotate(200deg) scale(0.82); }
+  50%  { transform: rotate(330deg) scale(1.18); }
+  70%  { transform: rotate(410deg) scale(0.88); }
+  85%  { transform: rotate(345deg) scale(1.06); }
   100% { transform: rotate(360deg) scale(1); }
 }
 
@@ -548,4 +556,63 @@ html, body {
 @media (max-height: 700px) {
   .die-face.big { width: 46px; height: 46px; }
   .center-bar { min-height: 60px; }
+}
+
+/* ===== MUTE BUTTON ===== */
+#btn-mute { font-size: 1.1rem; min-width: 36px; padding: 0.5rem 0.6rem; }
+
+/* ===== SCREEN SHAKE ===== */
+.game-layout.shake { animation: screenShake 0.4s ease-out; }
+@keyframes screenShake {
+  0%, 100% { transform: translateX(0); }
+  10%  { transform: translate(-5px, 2px); }
+  20%  { transform: translate(5px, -3px); }
+  30%  { transform: translate(-4px, 1px); }
+  40%  { transform: translate(3px, -1px); }
+  50%  { transform: translate(-2px, 1px); }
+  60%  { transform: translate(1px, 0); }
+}
+
+/* ===== PARTICLES ===== */
+.vfx-particle {
+  position: fixed;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 300;
+  animation: particleBurst 0.6s ease-out forwards;
+}
+@keyframes particleBurst {
+  0%   { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--pdx), var(--pdy)) scale(0); opacity: 0; }
+}
+
+/* ===== IMPACT FLASH ===== */
+.vfx-impact-flash {
+  position: fixed;
+  width: 20px; height: 20px;
+  margin-left: -10px; margin-top: -10px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+  z-index: 250;
+  animation: impactFlash 0.3s ease-out forwards;
+}
+@keyframes impactFlash {
+  0%   { transform: scale(0.5); opacity: 1; box-shadow: 0 0 20px 10px rgba(255,255,255,0.8); }
+  100% { transform: scale(4); opacity: 0; box-shadow: none; }
+}
+
+/* ===== CONFETTI ===== */
+.vfx-confetti {
+  position: fixed;
+  top: -12px;
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 300;
+  animation: confettiFall 2s ease-in forwards;
+}
+@keyframes confettiFall {
+  0%   { transform: translateY(0) rotate(0deg) scale(1); opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: translateY(100vh) rotate(720deg) scale(0.4); opacity: 0; }
 }
