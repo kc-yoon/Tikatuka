@@ -563,12 +563,7 @@ class App {
     document.getElementById('password-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.login();
     });
-    // press-and-hold to spin the die, release to settle
-    const dieStage = document.getElementById('die-stage');
-    dieStage.addEventListener('pointerdown', (e) => this.rollStart(e));
-    document.getElementById('btn-roll-fab').addEventListener('pointerdown', (e) => this.rollStart(e));
-    document.addEventListener('pointerup', () => this.rollRelease());
-    document.addEventListener('pointercancel', () => this.rollRelease());
+    // die rolling is now automatic — no manual press needed
     const onResize = () => this.sizeBoards();
     window.addEventListener('resize', onResize);
     if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
@@ -864,7 +859,7 @@ class App {
     this.showScreen('screen-game');
     this.sizeBoards();
     if (this.mode === 'online') this.loadH2H();
-    if (this.mode === 'ai' && this.difficulty === 'hard') this.loadAiStreak();
+    if (this.mode === 'ai') this.loadAiStreak();
     this.startTurn();
   }
 
@@ -886,8 +881,12 @@ class App {
 
   showAiStreak(n) {
     const el = document.getElementById('h2h-record');
-    el.textContent = '🔥 ' + n + '연승 중';
-    el.style.display = '';
+    if (n >= 2) {
+      el.textContent = '🔥 ' + n + '연승 중';
+      el.style.display = '';
+    } else {
+      el.style.display = 'none';
+    }
     this.sizeBoards();
   }
 
@@ -964,59 +963,20 @@ class App {
   }
 
   promptRoll() {
-    this.awaitingRoll = true;
-    this.renderDie(0, !this.isBottom(this.turn));
-    document.getElementById('die-stage').classList.add('rollable');
-    document.getElementById('btn-roll-fab').style.display = '';
     document.getElementById('btn-hold').style.display = '';   // hold usable before rolling
     const label = document.getElementById('turn-label');
     label.classList.add('my-turn');
-    label.textContent = '주사위를 굴리세요';
-  }
-
-  // press-and-hold: start spinning the die
-  rollStart(e) {
-    if (e && e.cancelable) e.preventDefault();
-    if (!this.awaitingRoll || this.rolling || this.gameOver || !this.myTurnNow()) return;
-    this.awaitingRoll = false;
-    this.spinning = true;
-    this.rolling = true;
-    document.getElementById('btn-hold').style.display = 'none';
-    document.getElementById('die-stage').classList.remove('rollable');
-    const el = document.getElementById('current-die');
-    el.classList.add('spinning');
-    sfx.play('diceRoll');
-    const opp = !this.isBottom(this.turn);
-    this._spinIv = setInterval(() => setDie(el, 1 + Math.floor(Math.random() * 6), opp), 55);
-  }
-
-  // release: decelerate smoothly and settle on the final value
-  rollRelease() {
-    if (!this.spinning) return;
-    this.spinning = false;
-    clearInterval(this._spinIv);
-    const el = document.getElementById('current-die');
-    el.classList.remove('spinning');
-    const opp = !this.isBottom(this.turn);
-    const v = 1 + Math.floor(Math.random() * 6);
-    const delays = [60, 90, 130, 190, 260];
-    let i = 0;
-    const step = () => {
-      if (i < delays.length) {
-        setDie(el, 1 + Math.floor(Math.random() * 6), opp);
-        setTimeout(step, delays[i++]);
-      } else {
-        this.currentDie = v;
-        setDie(el, v, opp);
-        sfx.play('diceSettle');
-        this.rolling = false;
+    label.textContent = '내 차례';
+    // auto-roll after a short delay
+    setTimeout(() => {
+      if (this.gameOver || this.rolling) return;
+      this.rollDie((v) => {
         if (this.mode === 'online' && this.turn === this.myPlayer) {
           this.net.sendAction({ type: 'roll', player: this.myPlayer, die: v });
         }
         this.enablePlacement();
-      }
-    };
-    step();
+      });
+    }, 400);
   }
 
   doReroll() {
@@ -1076,7 +1036,6 @@ class App {
     if (this.mode === 'online') this.net.sendAction({ type: 'hold', player: p });
     this.currentDie = 0;
     this.awaitingRoll = false;
-    document.getElementById('die-stage').classList.remove('rollable');
     this.disablePlacement();
     this.renderDie(0, false);
     if (this.isDone(0) && this.isDone(1)) { this.endGame(); return; }
@@ -1519,7 +1478,6 @@ class App {
     this.clearColumnHandlers();
     document.getElementById('btn-reroll').style.display = 'none';
     document.getElementById('btn-hold').style.display = 'none';
-    document.getElementById('btn-roll-fab').style.display = 'none';
   }
 
   // ---------- game over ----------

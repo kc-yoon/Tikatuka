@@ -171,13 +171,13 @@ const store = {
   async leaderboard() {
     if (useDB) {
       const r = await pool.query(
-        'SELECT nickname, wins, losses, title, ai_streak, ai_max_streak FROM tikatuka_users ORDER BY wins DESC, losses ASC LIMIT 20'
+        'SELECT nickname, wins, losses, title, ai_streak, ai_max_streak FROM tikatuka_users ORDER BY ai_max_streak DESC, wins DESC, losses ASC LIMIT 20'
       );
       return r.rows;
     }
     return [...memUsers.values()]
       .map(u => ({ nickname: u.nickname, wins: u.wins, losses: u.losses, title: u.title || null, ai_streak: u.ai_streak || 0, ai_max_streak: u.ai_max_streak || 0 }))
-      .sort((a, b) => b.wins - a.wins || a.losses - b.losses)
+      .sort((a, b) => (b.ai_max_streak || 0) - (a.ai_max_streak || 0) || b.wins - a.wins || a.losses - b.losses)
       .slice(0, 20);
   }
 };
