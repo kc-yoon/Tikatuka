@@ -117,6 +117,10 @@ const SHALLOW  = 5;     // depth ≤ SHALLOW → reduced sampling for speed
 const DEEP     = 3;     // depth ≤ DEEP → ultra-reduced sampling (2 dice)
 const DICE_SAMPLES = [1, 4, 6];  // representative low/mid/high for mid-depth
 const DICE_DEEP    = [2, 5];     // representative lo/hi for deepest nodes
+const TOP_COLS     = 2;          // at depth ≤ SHALLOW only the best TOP_COLS columns are searched
+const WIN_VALUE    = 600;        // finished game: decided by lines, not by the heuristic
+const HOLD_MARGIN   = 5;         // hold only when clearly better than placing
+const REROLL_MARGIN = 3;         // the reroll is single-use, so keep it unless it clearly pays
 
 // place a normal die of value X into `placer`'s column; resolve 알까기
 function simMove(grids, placer, col, X) {
@@ -176,126 +180,137 @@ function boardKey(grids, mover, ai, depth) {
          (mover * 2 + ai) + ',' + depth;
 }
 
+// `held` is a bitmask of players who held (bit p set → player p places no more dice).
+function isDone(grids, p, held) {
+  return ((held >> p) & 1) === 1 || fieldFull(grids[p]);
+}
+
+// exact value of a finished game for `ai`, using the same rule as App.lineResult()
+function finalValue(grids, ai) {
+  let w = 0, m = 0;
+  for (let c = 0; c < 3; c++) {
+    const a = columnScore(grids[ai][c]), b = columnScore(grids[1 - ai][c]);
+    if (a > b) { w++; m += a - b; } else if (b > a) { w--; m -= a - b; }
+  }
+  if (w === 0) w = Math.sign(m);   // 1:1 lines → bigger winning margin decides
+  return w * WIN_VALUE;
+}
+
 // minimax over chance (dice) nodes; value always from `ai`'s perspective.
 // `mover` is about to roll and play; `depth` = remaining plies.
 // Sampling strategy: root=all 6 dice, mid-depth=3, deep=2.
-function searchRoll(grids, mover, ai, depth) {
+function searchRoll(grids, mover, ai, depth, held) {
+  if (isDone(grids, mover, held)) {
+    if (isDone(grids, 1 - mover, held)) return finalValue(grids, ai);
+    mover = 1 - mover;   // this player is done; other keeps going
+  }
   if (depth <= 0) return evalBoard(grids, ai);
-  const key = boardKey(grids, mover, ai, depth);
+  const key = boardKey(grids, mover, ai, depth) + ',' + held;
   const hit = searchCache.get(key);
   if (hit !== undefined) return hit;
-  const v = searchRollUncached(grids, mover, ai, depth);
+  const v = searchRollUncached(grids, mover, ai, depth, held);
   searchCache.set(key, v);
   return v;
 }
 
-function searchRollUncached(grids, mover, ai, depth) {
-  if (fieldFull(grids[mover])) {
-    if (fieldFull(grids[1 - mover])) return evalBoard(grids, ai);
-    return searchRoll(grids, 1 - mover, ai, depth);   // this player is done; other keeps going
-  }
-  if (depth <= DEEP) {
-    // deepest nodes: sample 2 dice {2,5} for maximum speed
-    let s = 0;
-    for (const X of DICE_DEEP) s += searchBestMove(grids, mover, ai, X, depth);
-    return s / DICE_DEEP.length;
-  }
-  if (depth <= SHALLOW) {
-    // mid-depth: sample 3 dice {1,4,6} for speed
-    let s = 0;
-    for (const X of DICE_SAMPLES) s += searchBestMove(grids, mover, ai, X, depth);
-    return s / DICE_SAMPLES.length;
-  }
+function searchRollUncached(grids, mover, ai, depth, held) {
+  const dice = depth <= DEEP ? DICE_DEEP : depth <= SHALLOW ? DICE_SAMPLES : null;
   let s = 0;
-  for (let X = 1; X <= 6; X++) s += searchBestMove(grids, mover, ai, X, depth);
+  if (dice) {
+    for (const X of dice) s += searchBestMove(grids, mover, ai, X, depth, held);
+    return s / dice.length;
+  }
+  for (let X = 1; X <= 6; X++) s += searchBestMove(grids, mover, ai, X, depth, held);
   return s / 6;
 }
 
-// At shallow depths, narrow columns to top-2 by quick evaluation.
-function searchBestMove(grids, mover, ai, X, depth) {
+// At shallow depths, narrow columns to the top TOP_COLS by quick evaluation.
+function searchBestMove(grids, mover, ai, X, depth, held) {
   let cols = validColumns(grids[mover]);
-  if (!cols.length) return searchRoll(grids, 1 - mover, ai, depth - 1);
-  // deep nodes with 3 valid columns: keep only top-2 by quick one-step eval
-  if (depth <= SHALLOW && cols.length > 2) {
-    const maximizing = mover === ai;
+  const maximizing = mover === ai;
+  if (depth <= SHALLOW && cols.length > TOP_COLS) {
     const ranked = cols.map(c => {
       const { g, killed } = simMove(grids, mover, c, X);
       return { c, v: evalBoard(g, ai) + (killed ? (maximizing ? KILL_BONUS : -KILL_BONUS) : 0) };
     });
     ranked.sort((a, b) => maximizing ? b.v - a.v : a.v - b.v);
-    cols = ranked.slice(0, 2).map(r => r.c);
+    cols = ranked.slice(0, TOP_COLS).map(r => r.c);
   }
-  const maximizing = mover === ai;
   let best = maximizing ? -Infinity : Infinity;
   for (const c of cols) {
-    const v = searchAfterMove(grids, mover, ai, c, X, depth);
+    const v = searchAfterMove(grids, mover, ai, c, X, depth, held);
     best = maximizing ? Math.max(best, v) : Math.min(best, v);
   }
   return best;
 }
 
-function searchAfterMove(grids, mover, ai, col, X, depth) {
+function searchAfterMove(grids, mover, ai, col, X, depth, held) {
   const { g, killed } = simMove(grids, mover, col, X);
   if (killed) {
     if (depth >= HARD_DEPTH) {
       // root reroll: average over all reroll values placed optimally (accurate)
       let s = 0;
-      for (let Y = 1; Y <= 6; Y++) s += searchRoll(bestImmuneFor(g, mover, Y), 1 - mover, ai, depth - 1);
+      for (let Y = 1; Y <= 6; Y++) s += searchRoll(bestImmuneFor(g, mover, Y), 1 - mover, ai, depth - 1, held);
       return s / 6;
     }
     // deeper: approximate the reroll with a flat bonus to keep the search fast
-    return searchRoll(g, 1 - mover, ai, depth - 1) + (mover === ai ? KILL_BONUS : -KILL_BONUS);
+    return searchRoll(g, 1 - mover, ai, depth - 1, held) + (mover === ai ? KILL_BONUS : -KILL_BONUS);
   }
-  return searchRoll(g, 1 - mover, ai, depth - 1);
+  return searchRoll(g, 1 - mover, ai, depth - 1, held);
 }
 
-// best achievable value for `me` given a rolled X (root: me plays, then search)
-function bestMoveVal(grids, me, X) {
-  let best = -Infinity;
-  for (const c of validColumns(grids[me])) best = Math.max(best, searchAfterMove(grids, me, me, c, X, HARD_DEPTH));
-  return best === -Infinity ? 0 : best;
+// best value for `ai` placing die X now, searched `depth` plies deep
+function bestPlacement(grids, ai, X, depth, held) {
+  let bestV = -Infinity, bestC = -1;
+  for (const c of validColumns(grids[ai])) {
+    const v = searchAfterMove(grids, ai, ai, c, X, depth, held);
+    if (v > bestV) { bestV = v; bestC = c; }
+  }
+  return { v: bestV, col: bestC };
 }
 
 // ---- hard AI decisions (pure: board in, decision out) ----
+// `held` is the bitmask described at isDone(); the AI itself is never held here.
 
 // AI rolled X. Returns { action: 'hold' } | { action: 'reroll' } | { action: 'place', col }.
-function hardDecide(grids, ai, X, canReroll) {
+function hardDecide(grids, ai, X, canReroll, held = 0) {
   searchCache.clear();
   const opp = 1 - ai;
-  const cols = validColumns(grids[ai]);
-  if (cols.length === 0) return null;
-  // Evaluate all columns ONCE and reuse
-  let bestPlaceV = -Infinity, bestC = cols[0];
-  for (const c of cols) {
-    const val = searchAfterMove(grids, ai, ai, c, X, HARD_DEPTH);
-    if (val > bestPlaceV) { bestPlaceV = val; bestC = c; }
-  }
+  if (validColumns(grids[ai]).length === 0) return null;
+  const place = bestPlacement(grids, ai, X, HARD_DEPTH, held);
 
-  // === Strategic hold: only in late game (≥7 dice placed) ===
+  // === Hold: the AI stops for the rest of the game; the opponent plays on alone ===
   const aiDice = grids[ai].reduce((s, c) => s + c.length, 0);
   if (aiDice >= 7) {
-    const holdV = searchRoll(grids, opp, ai, HARD_DEPTH - 1);
-    if (holdV > bestPlaceV + 5) return { action: 'hold' };
+    const holdV = searchRoll(grids, opp, ai, HARD_DEPTH - 1, held | (1 << ai));
+    if (holdV > place.v + HOLD_MARGIN) return { action: 'hold' };
   }
 
-  // === Reroll: use HARD_DEPTH−2 for speed (still strong) ===
+  // === Reroll: like a human, the AI then keeps whichever of the two dice is better ===
   if (canReroll) {
+    const D = HARD_DEPTH - 2;   // both sides of the comparison use the same depth
+    const val = [0];
+    for (let e = 1; e <= 6; e++) val.push(bestPlacement(grids, ai, e, D, held).v);
     let exp = 0;
-    for (let e = 1; e <= 6; e++) {
-      let v = -Infinity;
-      for (const c of cols)
-        v = Math.max(v, searchAfterMove(grids, ai, ai, c, e, HARD_DEPTH - 2));
-      exp += v === -Infinity ? 0 : v;
-    }
+    for (let e = 1; e <= 6; e++) exp += Math.max(val[X], val[e]);
     exp /= 6;
-    if (bestPlaceV < exp - 3) return { action: 'reroll' };
+    if (exp > val[X] + REROLL_MARGIN) return { action: 'reroll' };
   }
 
-  return { action: 'place', col: bestC };
+  return { action: 'place', col: place.col };
+}
+
+// After rerolling X into Y: keep the better die. Returns { die, col }.
+function hardAfterReroll(grids, ai, X, Y, held = 0) {
+  searchCache.clear();
+  const a = bestPlacement(grids, ai, X, HARD_DEPTH, held);
+  if (X === Y) return { die: X, col: a.col };
+  const b = bestPlacement(grids, ai, Y, HARD_DEPTH, held);
+  return b.v > a.v ? { die: Y, col: b.col } : { die: X, col: a.col };
 }
 
 // AI must place the immune reroll die Y on either field. Returns { owner, col }.
-function hardPlaceImmune(grids, ai, Y) {
+function hardPlaceImmune(grids, ai, Y, held = 0) {
   searchCache.clear();
   const opp = 1 - ai;
   const options = [];
@@ -305,7 +320,7 @@ function hardPlaceImmune(grids, ai, Y) {
   let best = options[0], bestV = -Infinity;
   for (const o of options) {
     const g = simImmune(grids, o.owner, o.col, Y);
-    const val = searchRoll(g, opp, ai, HARD_DEPTH - 1);   // opponent to move next
+    const val = searchRoll(g, opp, ai, HARD_DEPTH - 1, held);   // opponent to move next
     if (val > bestV) { bestV = val; best = o; }
   }
   return { owner: best.owner, col: best.col };
@@ -313,7 +328,9 @@ function hardPlaceImmune(grids, ai, Y) {
 
 // entry point shared by ai-worker.js and the inline fallback in game.js
 function runAIJob(kind, args) {
-  if (kind === 'act') return hardDecide(args.grids, args.ai, args.die, args.canReroll);
-  if (kind === 'placeImmune') return hardPlaceImmune(args.grids, args.ai, args.die);
+  const held = args.held || 0;
+  if (kind === 'act') return hardDecide(args.grids, args.ai, args.die, args.canReroll, held);
+  if (kind === 'afterReroll') return hardAfterReroll(args.grids, args.ai, args.die, args.newDie, held);
+  if (kind === 'placeImmune') return hardPlaceImmune(args.grids, args.ai, args.die, held);
   return null;
 }

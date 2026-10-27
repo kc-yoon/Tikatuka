@@ -1040,12 +1040,22 @@ class App {
     if (this.difficulty === 'hard') {
       if (validColumns(this.grids[ai]).length === 0) return;
       this.showAIThinking();
-      this.aiThink('act', { grids: this.grids, ai, die: X, canReroll: !this.rerollUsed[ai] }, (d) => {
+      const held = this.heldMask();
+      this.aiThink('act', { grids: this.grids, ai, die: X, canReroll: !this.rerollUsed[ai], held }, (d) => {
         if (!d) return;
         if (d.action === 'hold') { this.aiDoHold(); return; }
         if (d.action === 'reroll') {
           this.rerollUsed[ai] = true;
-          this.rollDie(() => setTimeout(() => this.aiPlace1(), 200));
+          // same rule as a human reroll: keep whichever of the old and new die is better
+          this.rollDie((Y) => {
+            this.showAIThinking();
+            this.aiThink('afterReroll', { grids: this.grids, ai, die: X, newDie: Y, held }, (r) => {
+              if (!r) return;
+              this.currentDie = r.die;
+              this.renderDie(r.die, !this.isBottom(ai));
+              setTimeout(() => this.applyPhase1(ai, r.col, { v: r.die, im: false }), 200);
+            });
+          });
           return;
         }
         this.applyPhase1(ai, d.col, { v: X, im: false });
@@ -1053,6 +1063,11 @@ class App {
       return;
     }
     this.aiPlace1();
+  }
+
+  // bit p set → player p has held (see isDone() in ai.js)
+  heldMask() {
+    return (this.held[0] ? 1 : 0) | (this.held[1] ? 2 : 0);
   }
 
   // Run a hard-AI search in the worker; `apply` runs only if the same game is
@@ -1107,7 +1122,7 @@ class App {
     const ai = this.aiPlayer, opp = 1 - ai, Y = this.currentDie;
     if (this.difficulty === 'hard') {
       this.showAIThinking();
-      this.aiThink('placeImmune', { grids: this.grids, ai, die: Y }, (best) => {
+      this.aiThink('placeImmune', { grids: this.grids, ai, die: Y, held: this.heldMask() }, (best) => {
         if (best) this.applyPhase2(best.owner, best.col, Y);
       });
       return;
